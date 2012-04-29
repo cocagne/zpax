@@ -15,6 +15,7 @@ class DB (object):
         self._fn = fn
         create = not os.path.exists(fn)
 
+        
         self._con = sqlite3.connect(fn)
         self._cur = self._con.cursor()
 
@@ -39,15 +40,32 @@ class DB (object):
         if r:
             return r[0]
 
+        
     def get_proposal(self, key):
-        r = self._cur.execute('SELECT proposal FROM kv WH?ERE key=?', (key,)).fetchone()
+        r = self._cur.execute('SELECT proposal FROM kv WHERE key=?', (key,)).fetchone()
         if r:
             return r[0]
-    
-    def update_key(self, key, value, proposal_number):
-        self._cur.execute('UPDATE kv SET value=?, proposal=? WHERE key=? AND proposal < ?',
-                          (value, proposal_number, key, proposal_number))
-        self._con.commit()
 
+        
+    def update_key(self, key, value, proposal_number):
+        prevpn = self.get_proposal(key)
+        if prevpn and proposal_number > prevpn:
+            self._cur.execute('UPDATE kv SET value=?, proposal=? WHERE key=?',
+                              (value, proposal_number, key))
+            self._con.commit()
+            
+        elif prevpn is None:
+            self._cur.execute('INSERT INTO kv VALUES (?, ?, ?)',
+                              (key, value, proposal_number))
+            self._con.commit()
+
+            
     def get_last_proposal(self):
         return self._cur.execute('SELECT MAX(proposal) FROM kv').fetchone()[0]
+
+    
+    def iter_updates(self, start_proposal, end_proposal=2**32):
+        c = self._con.cursor()
+        c.execute('SELECT key,value,proposal FROM kv WHERE proposal>? AND proposal<?  ORDER BY proposal',
+                  (start_proposal, end_proposal))
+        return c
