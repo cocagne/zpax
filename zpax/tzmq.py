@@ -10,6 +10,8 @@ from twisted.internet.interfaces import IFileDescriptor, IReadDescriptor
 from twisted.internet import reactor
 from twisted.python   import log
 
+from zmq.core.constants import PUB, SUB, REQ, REP, PUSH, PULL, ROUTER, DEALER, PAIR
+
 # TODO: Support the Producer/Consumer interface
 
 _context = None # ZmqContext singleton
@@ -18,10 +20,15 @@ def getContext():
     if _context is not None:
         return _context
     else:
-        return ZmqContext()
+        return _ZmqContext()
+
+def _cleanup():
+    global _context
+    if _context:
+        _context.shutdown()
     
 
-class ZmqContext(object):
+class _ZmqContext(object):
     """
     This class wraps a ZeroMQ Context object and integrates it into the
     Twisted reactor framework.
@@ -49,6 +56,8 @@ class ZmqContext(object):
 
         _context = self
 
+        reactor.addSystemEventTrigger('during', 'shutdown', _cleanup)
+
     def shutdown(self):
         """
         Shutdown the ZeroMQ context and all associated sockets.
@@ -58,7 +67,7 @@ class ZmqContext(object):
         if self._zctx is not None:
         
             for socket in self._sockets.copy():
-                socket.shutdown()
+                socket.close()
 
             self._sockets = None
 
@@ -66,13 +75,7 @@ class ZmqContext(object):
             self._zctx = None
 
         _context = None
-
-    def registerForShutdown(self):
-        """
-        Register factory to be automatically shut down
-        on reactor shutdown.
-        """
-        reactor.addSystemEventTrigger('during', 'shutdown', self.shutdown)
+        
 
 
 
@@ -87,19 +90,22 @@ class ZmqSocket(object):
     """
     implements(IReadDescriptor, IFileDescriptor)
 
-    socket_type = None
+    socketType = None
     
-    def __init__(self):
+    def __init__(self, socketType=None):
         """
         @param context: Context this socket is to be associated with
         @type factory: L{ZmqFactory}
-        @param socket_type: Type of socket to create
-        @type socket_type: C{int}
+        @param socketType: Type of socket to create
+        @type socketType: C{int}
         """
-        assert self.socket_type is not None
+        if socketType is not None:
+            self.socketType = socketType
+            
+        assert self.socketType is not None
         
         self._ctx   = getContext()
-        self._zsock = Socket(context._zctx, self.socket_type)
+        self._zsock = Socket(getContext()._zctx, self.socketType)
         self._queue = deque()
 
         self.fd     = self._zsock.getsockopt(constants.FD)
@@ -114,17 +120,15 @@ class ZmqSocket(object):
                          lambda zs,v: zs._zsock.setsockopt(i,totype(v)) )
 
     
-    linger     = _sockopt_property( constants.LINGER        )
-    mcast_loop = _sockopt_property( constatns.MCAST_LOOP    )
-    rate       = _sockopt_property( constatns.RATE          )
-    hwm        = _sockopt_property( constatns.HWM           )
-    identity   = _sockopt_property( constatns.IDENTITY, str )
+    linger     = _sockopt_property( constants.LINGER         )
+    mcast_loop = _sockopt_property( constants.MCAST_LOOP     )
+    rate       = _sockopt_property( constants.RATE           )
+    hwm        = _sockopt_property( constants.HWM            )
+    identity   = _sockopt_property( constants.IDENTITY,  str )
+    subscribe  = _sockopt_property( constants.SUBSCRIBE, str )
 
 
-    def shutdown(self):
-        """
-        Shutdown the socket.
-        """
+    def close(self):
         self._ctx.reactor.removeReader(self)
 
         self._ctx._sockets.discard(self)
@@ -151,22 +155,12 @@ class ZmqSocket(object):
     
     def connectionLost(self, reason):
         """
-        Called when the connection was lost.
+        Called when the connection was lost. This will only be called during
+        reactor shutdown with active ZeroMQ sockets.
 
         Part of L{IFileDescriptor}.
 
-        This is called when the connection on a selectable object has been
-        lost.  It will be called whether the connection was closed explicitly,
-        an exception occurred in an event handler, or the other end of the
-        connection closed it first.
-
-        @param reason: A failure instance indicating the reason why the
-                       connection was lost.  L{error.ConnectionLost} and
-                       L{error.ConnectionDone} are of special note, but the
-                       failure may be of other classes as well.
         """
-        log.err(reason, "Connection to ZeroMQ lost in %r" % (self))
-        
         if self._ctx:
             self._ctx.reactor.removeReader(self)
 
@@ -224,6 +218,9 @@ class ZmqSocket(object):
         """
         Sends a ZeroMQ message. Each positional argument is converted into a message part
         """
+        if len(message_parts) == 1 and isinstance(message_parts, (list, tuple)):
+            message_parts = message_parts[0]
+            
         if self._zsock.getsockopt(constants.EVENTS) & constants.POLLOUT == constants.POLLOUT:
             self._zsock.send_multipart( message_parts, constants.NOBLOCK )
         else:
@@ -238,14 +235,10 @@ class ZmqSocket(object):
         return self._zsock.bind(addr)
 
     
-    def bind_to_random_port(self, addr, min_port=49152, max_port=65536, max_tries=100):
+    def bindToRandomPort(self, addr, min_port=49152, max_port=65536, max_tries=100):
         return self._zsock.bind_to_random_port(addr, min_port, max_port, max_tries)
 
     
-    def close(self):
-        self._zsock.close()
-
-        
     def messageReceived(self, message_parts):
         """
         Called on incoming message from ZeroMQ.
@@ -254,3 +247,30 @@ class ZmqSocket(object):
         """
         raise NotImplementedError(self)
 
+
+class ZmqPubSocket(ZmqSocket):
+    socketType = PUB
+
+class ZmqSubSocket(ZmqSocket):
+    socketType = SUB
+
+class ZmqReqSocket(ZmqSocket):
+    socketType = REQ
+
+class ZmqRepSocket(ZmqSocket):
+    socketType = REP
+
+class ZmqPushSocket(ZmqSocket):
+    socketType = PUSH
+
+class ZmqPullSocket(ZmqSocket):
+    socketType = PULL
+
+class ZmqRouterSocket(ZmqSocket):
+    socketType = ROUTER
+
+class ZmqDealerSocket(ZmqSocket):
+    socketType = DEALER
+
+class ZmqPairSocket(ZmqSocket):
+    socketType = PAIR
