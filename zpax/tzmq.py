@@ -16,6 +16,8 @@ from zmq.core.constants import PUB, SUB, REQ, REP, PUSH, PULL, ROUTER, DEALER, P
 
 _context = None # ZmqContext singleton
 
+POLL_IN_OUT = constants.POLLOUT & constants.POLLIN
+
 def getContext():
     if _context is not None:
         return _context
@@ -173,35 +175,41 @@ class ZmqSocket(object):
         we're starting to send queued messages and to receive
         incoming messages.
 
+        Note that the ZeroMQ FD is used in an edge-triggered manner.
+        Consequently, this function must read all pending messages
+        before returning.
+
         Part of L{IReadDescriptor}.
         """
 
+        #print 'doRead()'
+
         events = self._zsock.getsockopt(constants.EVENTS)
         
-        if (events & constants.POLLOUT) == constants.POLLOUT:
-            while self._queue:
-                try:
-                    self._zsock.send_multipart( self._queue[0], constants.NOBLOCK )
-                    self._queue.popleft()
-                except error.ZMQError as e:
-                    if e.errno == constants.EAGAIN:
-                        break
-                    self._queue.popleft() # Failed to send, discard message
-                    raise e
-
-                
-        if (events & constants.POLLIN) == constants.POLLIN:
-            while True:
-                if self._ctx is None:  # disconnected
-                    return
-                try:
-                    msg_list = self._zsock.recv_multipart( constants.NOBLOCK )
-                except error.ZMQError as e:
-                    if e.errno == constants.EAGAIN:
-                        break
-                    raise e
-
-                log.callWithLogger(self, self.messageReceived, msg_list)
+        while self._queue and (events & constants.POLLOUT) == constants.POLLOUT:
+            try:
+                self._zsock.send_multipart( self._queue[0], constants.NOBLOCK )
+                self._queue.popleft()
+                events = self._zsock.getsockopt(constants.EVENTS)
+            except error.ZMQError as e:
+                if e.errno == constants.EAGAIN:
+                    break
+                self._queue.popleft() # Failed to send, discard message
+                raise e
+        
+        while (events & constants.POLLIN) == constants.POLLIN:
+            if self._ctx is None:  # disconnected
+                return
+            
+            try:
+                msg_list = self._zsock.recv_multipart( constants.NOBLOCK )
+            except error.ZMQError as e:
+                if e.errno == constants.EAGAIN:
+                    break
+                raise e
+            
+            log.callWithLogger(self, self.messageReceived, msg_list)
+            events = self._zsock.getsockopt(constants.EVENTS)
 
                 
     def logPrefix(self):
@@ -218,13 +226,21 @@ class ZmqSocket(object):
         """
         Sends a ZeroMQ message. Each positional argument is converted into a message part
         """
-        if len(message_parts) == 1 and isinstance(message_parts, (list, tuple)):
+        if len(message_parts) == 1 and isinstance(message_parts[0], (list, tuple)):
             message_parts = message_parts[0]
             
         if self._zsock.getsockopt(constants.EVENTS) & constants.POLLOUT == constants.POLLOUT:
             self._zsock.send_multipart( message_parts, constants.NOBLOCK )
         else:
             self._queue.append( message_parts )
+
+        # The following call is requried to ensure that the socket's file descriptor
+        # will signal new data as being available.
+        self._zsock.getsockopt(constants.EVENTS)
+        
+        # 
+        #if self._zsock.getsockopt(constants.EVENTS) & POLL_IN_OUT:
+        #    self.doRead()
 
 
     def connect(self, addr):

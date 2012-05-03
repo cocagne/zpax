@@ -17,6 +17,18 @@ def straight():
         c += 1
         s.send('foo ' + str(c))
 
+def straight2():
+    ctx = zmq.Context()
+    s = ctx.socket(zmq.REP)
+
+    s.bind('tcp://*:5556')
+    c = 0
+    while True:
+        c += 1
+        print 'Recv: ', s.recv_multipart()
+        s.send('foo ' + str(c))
+
+        
 def tz():
 
 
@@ -50,10 +62,9 @@ def tz2():
         o.count = 0
         
         def onreq( req ):
-            print repr(req)
             o.count += 1
             print 'Req {}: Sending: {}'.format(req, o.count)
-            s.send('', str(o.count))
+            s.send('foobar ' + str(o.count))
 
         s.messageReceived = onreq
             
@@ -64,4 +75,5 @@ def tz2():
     reactor.callWhenRunning(doit)
     reactor.run()
 
+#straight2()
 tz2()

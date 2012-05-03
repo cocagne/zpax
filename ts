@@ -1,6 +1,9 @@
 #!/usr/bin/python
 
 import zmq
+from zmq.core import constants
+
+import select
 
 from twisted.internet import reactor, defer
 
@@ -16,6 +19,24 @@ def straight():
     
     while True:
         print s.recv()
+
+
+def straight2():
+    c = zmq.Context()
+    s = c.socket(zmq.REQ)
+    
+    s.connect('tcp://localhost:5556')
+
+    fd = s.getsockopt(constants.FD)
+
+    for x in range(1,10):
+        s.send('foo')
+        events = s.getsockopt(constants.EVENTS)
+        if (events & constants.POLLIN) != constants.POLLIN:
+            print 'Blocking!'
+            select.select( [fd,],[],[] )
+        r = s.recv()
+        print 'recv: ', repr(r)
 
 
 def tz():
@@ -44,26 +65,34 @@ def tz():
 def tz2():
 
     def doit():
-        def recv(msg_parts):
-            print 'Recv: ', msg_parts
+
+        o = type('foo', (object,), {})()
+        o.count = 0
             
         s = tzmq.ZmqReqSocket()
+
+        def recv(msg_parts):
+            print 'Recv: ', msg_parts
+            o.count += 1
+            if o.count < 10:
+                s.send(str(o.count))
 
         s.messageReceived = recv
 
         s.connect('tcp://localhost:5556')
-        
-        s.send('', 'foo')
 
-        p = zmq.Poller()
-        p.register(s._zsock, zmq.POLLIN)
-        x = p.poll()
-        print 'Poll done'
-        print s._zsock.recv_multipart()
+        s.send('foo')
+        
+        #p = zmq.Poller()
+        #p.register(s._zsock, zmq.POLLIN)
+        #x = p.poll()
+        #print 'Poll done'
+        #print s._zsock.recv_multipart()
 
         
     reactor.callWhenRunning(doit)
     reactor.run()
 
+#straight2()
 tz2()
 
