@@ -74,19 +74,21 @@ class SimpleNode (object):
         self.sequence_number  = sequence_number
         self.current_leader   = None
 
+        self.waiting_clients  = set() # Contains router addresses of clients waiting for updates
+
         self.mpax             = SimpleMultiPaxos(self)
 
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
         
         self.pubsub           = tzmq.ZmqPubSocket()
-        self.rep              = tzmq.ZmqRepSocket()
+        self.router           = tzmq.ZmqRouterSocket()
         
         self.pubsub.messageReceived = self.onPubSubReceived
-        self.rep.messageReceived    = self.onRepReceived
+        self.router.messageReceived = self.onRouterReceived
         
         self.pubsub.bind(self.local_ps_addr)
-        self.rep.bind(self.local_rep_addr)
+        self.router.bind(self.local_rep_addr)
 
         for x in remote_pub_sub_addrs:
             self.pubsub.connect(x)
@@ -200,16 +202,73 @@ class SimpleNode (object):
             self.mpax.set_instance_number(self.sequence_number)
 
             
+    def _on_pub_value_proposal(self, header):
+        if header['sequence_number'] == self.sequence_number:
+            self.mpax.set_proposal(self.sequence_number, header['value'])
+
+            
     def publish_value(self):
         self.publish( dict(type='value', sequence_number=self.sequence_number, value=self.value) )
 
 
     def onProposalResolution(self, instance_num, value):
-        pass
+        self.value            = value
+        self.sequence_number  = instance_num + 1
+
+        for addr in self.waiting_clients:
+            self.reply_value(addr)
+
+        self.waiting_clients.clear()
 
 
-    def onRepReceived(self, msg_parts):
-        pass
+    def onRouterReceived(self, msg_parts):
+        try:
+            addr  = msg_parts[0]
+            parts = [ json.loads(p) for p in msg_parts[1:] ]
+        except ValueError:
+            print 'Invalid JSON: ', msg_parts
+
+        if parts or not 'type' in parts[0]:
+            print 'Missing message type'
+            return
+
+        fobj = getattr(self, '_on_router_' + parts[0]['type'], None)
+        
+        if fobj:
+            fobj(addr, *parts)
+
+            
+    def reply(self, addr, *parts):
+        jparts = [ json.dumps(p) for p in parts ]
+        self.router.send( addr, *jparts )
+
+        
+    def reply_value(self, addr):
+        self.reply(addr, dict(sequence_number=self.sequence_number-1, value=self.value) )
+
+        
+    def _on_router_propose_value(self, addr, header):
+        if header['sequence_number'] == self.sequence_number:
+            self.publish( dict(type='value_proposal', sequence_number=self.sequence_number, value=header['value']) )
+            self.mpax.set_proposal(self.sequence_number, header['value'])
+            self.reply(addr, dict(proposed=True))
+        else:
+            self.reply(addr, dict(proposed=False, message='Invalid sequence number'))
+
+            
+    def _on_router_query_value(self, addr, header):
+        self.reply_value(addr)
+
+        
+    def _on_router_get_next_value(self, addr, header):
+        if header['sequence_number'] < self.sequence_number:
+            self.reply_value(addr)
+        else:
+            self.waiting_clients.add( addr )
+        
+
+        
+        
 
 
 
