@@ -1,5 +1,15 @@
 #!/usr/bin/python
 
+import sys
+import os.path
+
+pd = os.path.dirname
+
+this_dir = pd(os.path.abspath(__file__))
+
+sys.path.append( pd(this_dir) )
+sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
+
 import zmq
 import random
 
@@ -35,7 +45,8 @@ def tz():
     def doit():
         s = tzmq.ZmqPubSocket()
 
-        s.bind('tcp://*:5556')
+        #s.bind('tcp://*:5556')
+        s.bind('tcp://*:3331')
         
         o = type('foo', (object,), {})()
         o.count = 0
@@ -76,4 +87,5 @@ def tz2():
     reactor.run()
 
 #straight2()
-tz2()
+#tz2()
+tz()

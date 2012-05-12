@@ -182,9 +182,9 @@ class ZmqSocket(object):
         Part of L{IReadDescriptor}.
         """
 
-        #print 'doRead()'
-
         events = self._zsock.getsockopt(constants.EVENTS)
+
+        #print 'doRead()', events
         
         while self._queue and (events & constants.POLLOUT) == constants.POLLOUT:
             try:
@@ -207,7 +207,7 @@ class ZmqSocket(object):
                 if e.errno == constants.EAGAIN:
                     break
                 raise e
-            
+
             log.callWithLogger(self, self.messageReceived, msg_list)
             events = self._zsock.getsockopt(constants.EVENTS)
 

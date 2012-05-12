@@ -1,0 +1,39 @@
+#!/usr/bin/python
+
+import sys
+import os.path
+
+pd = os.path.dirname
+
+this_dir = pd(os.path.abspath(__file__))
+
+sys.path.append( pd(this_dir) )
+sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
+
+from zpax import simple
+
+
+from twisted.internet import reactor, defer
+
+
+ids = dict( a = 1, b = 2, c = 3 )
+
+snode = None
+
+def doit():
+    global snode
+    
+    i = sys.argv[1]
+    lcl_pub = 'tcp://127.0.0.1:333{}'.format(ids[i])
+    lcl_rtr = 'tcp://127.0.0.1:444{}'.format(ids[i])
+    del ids[i]
+    pubs = [ 'tcp://127.0.0.1:333{}'.format(x) for x in ids.values() ]
+
+    snode = simple.SimpleNode( lcl_pub, lcl_pub, lcl_rtr, pubs, 2 )
+    
+
+        
+reactor.callWhenRunning(doit)
+reactor.run()
+
+

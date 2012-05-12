@@ -1,20 +1,20 @@
 import json
 
 from zpax import tzmq
-from paxos import multi
+from paxos import multi, basic
 from paxos.leaders import heartbeat
 
 from twisted.internet import defer, task, reactor
 
 
 class SimpleHeartbeatProposer (heartbeat.Proposer):
-    hb_period       = 500
-    liveness_window = 1500
+    hb_period       = 0.5
+    liveness_window = 1.5
 
     def __init__(self, simple_node):
         self.node = simple_node
 
-        super(SimpleHeartbeatProposer, self).__init__(self.node.local_ps_addr,
+        super(SimpleHeartbeatProposer, self).__init__(self.node.node_uid,
                                                       self.node.paxos_threshold,
                                                       leader_uid = self.node.current_leader)
 
@@ -44,11 +44,13 @@ class SimpleHeartbeatProposer (heartbeat.Proposer):
 class SimpleMultiPaxos(multi.MultiPaxos):
 
     def __init__(self, simple_node):
+        self.simple_node  = simple_node
+        self.node_factory = simple_node._node_factory
+        
         super(SimpleMultiPaxos, self).__init__( simple_node.node_uid,
                                                 simple_node.paxos_threshold,
                                                 simple_node.sequence_number )
-        self.simple_node  = simple_node
-        self.node_factory = simple_node._node_factory
+        
 
         
     def on_proposal_resolution(self, instance_num, value):
@@ -60,14 +62,14 @@ class SimpleMultiPaxos(multi.MultiPaxos):
 class SimpleNode (object):
 
     def __init__(self, node_uid,
-                 local_pub_sub_addr,   local_rep_addr,
+                 local_pub_sub_addr,   local_rtr_addr,
                  remote_pub_sub_addrs,
                  paxos_threshold,
                  initial_value='', sequence_number=0):
 
         self.node_uid         = node_uid
         self.local_ps_addr    = local_pub_sub_addr
-        self.local_rep_addr   = local_rep_addr
+        self.local_rtr_addr   = local_rtr_addr
         self.remote_ps_addrs  = remote_pub_sub_addrs
         self.paxos_threshold  = paxos_threshold
         self.value            = initial_value
@@ -81,22 +83,26 @@ class SimpleNode (object):
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
         
-        self.pubsub           = tzmq.ZmqPubSocket()
+        self.pub              = tzmq.ZmqPubSocket()
+        self.sub              = tzmq.ZmqSubSocket()
         self.router           = tzmq.ZmqRouterSocket()
+
+        self.sub.subscribe = 'zpax'
         
-        self.pubsub.messageReceived = self.onPubSubReceived
+        self.sub.messageReceived    = self.onSubReceived
         self.router.messageReceived = self.onRouterReceived
         
-        self.pubsub.bind(self.local_ps_addr)
-        self.router.bind(self.local_rep_addr)
+        self.pub.bind(self.local_ps_addr)
+        self.router.bind(self.local_rtr_addr)
 
         for x in remote_pub_sub_addrs:
-            self.pubsub.connect(x)
+            print 'Connecting: ', x
+            self.sub.connect(x)
 
-        self.heartbeat_poller.start( SimpleHeartbeatProposer.liveness_window / 1000.0 )
+        self.heartbeat_poller.start( SimpleHeartbeatProposer.liveness_window )
 
 
-    def _node_factory(self,  quorum_size, resolution_callback):
+    def _node_factory(self, node_uid, quorum_size, resolution_callback):
         return basic.Node( SimpleHeartbeatProposer(self),
                            basic.Acceptor(),
                            basic.Learner(quorum_size),
@@ -112,15 +118,22 @@ class SimpleNode (object):
 
         
     def paxos_on_leadership_acquired(self):
-        self.heartbeat_pulser.start( SimpleHeartbeatProposer.hb_period / 1000.0 )
+        print self.node_uid, 'I have the leader!'
+        self.heartbeat_pulser.start( SimpleHeartbeatProposer.hb_period )
 
         
     def paxos_on_leadership_lost(self):
+        print self.node_uid, 'I LOST the leader!'
         if self.heartbeat_pulser.running:
             self.heartbeat_pulser.stop()
 
 
+    def paxos_on_leadership_change(self, prev_leader_uid, new_leader_uid):
+        print '*** Change of guard: ', prev_leader_uid, new_leader_uid
+
+
     def paxos_send_prepare(self, proposal_id):
+        #print self.node_uid, 'sending prepare: ', proposal_id
         self.publish( dict( type='paxos_prepare', sequence_number=self.sequence_number, node_uid=self.node_uid ),
                       [proposal_id,] )
 
@@ -137,24 +150,27 @@ class SimpleNode (object):
 
     def publish(self, *parts):
         jparts = [ json.dumps(p) for p in parts ]
-        self.pubsub.send( jparts )
+        self.pub.send( 'zpax', *jparts )
+        self.onSubReceived(['zpax'] + jparts)
 
 
-    def onPubSubReceived(self, msg_parts):
+    def onSubReceived(self, msg_parts):
         '''
-        msg_parts - [0] is SimpleNode's JSON-encoded structure
-                    [1] If present, it's a JSON-encoded Paxos message
+        msg_parts - [0] 'zpax'
+                    [1] is SimpleNode's JSON-encoded structure
+                    [2] If present, it's a JSON-encoded Paxos message
         '''
         try:
-            parts = [ json.loads(p) for p in msg_parts ]
+            parts = [ json.loads(p) for p in msg_parts[1:] ]
         except ValueError:
             print 'Invalid JSON: ', msg_parts
+            return
 
         if not 'type' in parts[0]:
             print 'Missing message type'
             return
 
-        fobj = getattr(self, '_on_pub_' + parts[0]['type'], None)
+        fobj = getattr(self, '_on_sub_' + parts[0]['type'], None)
         
         if fobj:
             fobj(*parts)
@@ -165,35 +181,44 @@ class SimpleNode (object):
         if header['sequence_number'] > self.sequence_number:
             self.publish( dict( type='get_value' ) )
 
-        if send_nack and header['sequence_number'] < self.sequence_number:
+        if header['sequence_number'] < self.sequence_number:
             self.publish_value()
 
+
+    def _on_sub_paxos_heartbeat(self, header, pax):
+        self.mpax.node.proposer.recv_heartbeat( tuple(pax[0]) )
+
     
-    def _on_pub_paxos_prepare(self, header, pax):
-        self._check_sequence(header):
-        r = self.mpax.recv_prepare(self.sequence_number, *pax)
+    def _on_sub_paxos_prepare(self, header, pax):
+        #print self.node_uid, 'got prepare', header, pax
+        self._check_sequence(header)
+        r = self.mpax.recv_prepare(self.sequence_number, tuple(pax[0]))
         if r:
+            #print self.node_uid, 'sending promise'
             self.publish( dict( type='paxos_promise', sequence_number=self.sequence_number, node_uid=self.node_uid ),
                           r )
 
             
-    def _on_pub_paxos_promise(self, header, pax):
-        self._check_sequence(header):
-        r = self.mpax.recv_promise(self.sequence_number, header['node_uid'], *pax)
-        if r:
+    def _on_sub_paxos_promise(self, header, pax):
+        #print self.node_uid, 'got promise', header, pax
+        self._check_sequence(header)
+        r = self.mpax.recv_promise(self.sequence_number, header['node_uid'],
+                                   tuple(pax[0]), tuple(pax[1]) if pax[1] else None, pax[2])
+        if r and r[1] is not None:
+            print self.node_uid, 'sending accept', r
             self.paxos_send_accept( *r )
             
 
-    def _on_pub_paxos_accept(self, header, pax):
-        self._check_sequence(header):
-        self.mpax.recv_accept_request(self.sequence_number, *pax)
+    def _on_sub_paxos_accept(self, header, pax):
+        self._check_sequence(header)
+        self.mpax.recv_accept_request(self.sequence_number, tuple(pax[0]), pax[1])
 
         
-    def _on_pub_get_value(self, header):
+    def _on_sub_get_value(self, header):
         self.publish_value()
         
 
-    def _on_pub_value(self, header):
+    def _on_sub_value(self, header):
         if header['sequence_number'] > self.sequence_number:
             self.value           = header['value']
             self.sequence_number = header['sequence_number']
@@ -202,7 +227,7 @@ class SimpleNode (object):
             self.mpax.set_instance_number(self.sequence_number)
 
             
-    def _on_pub_value_proposal(self, header):
+    def _on_sub_value_proposal(self, header):
         if header['sequence_number'] == self.sequence_number:
             self.mpax.set_proposal(self.sequence_number, header['value'])
 
