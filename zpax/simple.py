@@ -11,11 +11,11 @@ class SimpleHeartbeatProposer (heartbeat.Proposer):
     hb_period       = 0.5
     liveness_window = 1.5
 
-    def __init__(self, simple_node, leader_uid):
-        self.node = simple_node
+    def __init__(self, pax_node, node_uid, quorum_size, leader_uid):
+        self.node = pax_node
 
-        super(SimpleHeartbeatProposer, self).__init__(self.node.node_uid,
-                                                      self.node.paxos_threshold,
+        super(SimpleHeartbeatProposer, self).__init__(node_uid,
+                                                      quorum_size,
                                                       leader_uid = leader_uid)
 
     def send_prepare(self, proposal_id):
@@ -43,18 +43,20 @@ class SimpleHeartbeatProposer (heartbeat.Proposer):
 
 class SimpleMultiPaxos(multi.MultiPaxos):
 
-    def __init__(self, simple_node):
-        self.simple_node  = simple_node
-        self.node_factory = simple_node._node_factory
+    def __init__(self, node_uid, quorum_size, sequence_number, node_factory,
+                 on_resolution_callback):
+
+        self.node_factory     = node_factory
+        self.on_resolution_cb = on_resolution_callback
         
-        super(SimpleMultiPaxos, self).__init__( simple_node.node_uid,
-                                                simple_node.paxos_threshold,
-                                                simple_node.sequence_number )
+        super(SimpleMultiPaxos, self).__init__( node_uid,
+                                                quorum_size,
+                                                sequence_number )
         
 
         
     def on_proposal_resolution(self, instance_num, value):
-        self.simple_node.onProposalResolution(instance_num, value)
+        self.on_resolution_cb(instance_num, value)
     
 
 
@@ -64,14 +66,14 @@ class SimpleNode (object):
     def __init__(self, node_uid,
                  local_pub_sub_addr,   local_rtr_addr,
                  remote_pub_sub_addrs,
-                 paxos_threshold,
+                 quorum_size,
                  initial_value='', sequence_number=0):
 
         self.node_uid         = node_uid
         self.local_ps_addr    = local_pub_sub_addr
         self.local_rtr_addr   = local_rtr_addr
         self.remote_ps_addrs  = remote_pub_sub_addrs
-        self.paxos_threshold  = paxos_threshold
+        self.quorum_size      = quorum_size
         self.value            = initial_value
         self.sequence_number  = sequence_number
         self.current_leader   = None
@@ -79,7 +81,11 @@ class SimpleNode (object):
 
         self.waiting_clients  = set() # Contains router addresses of clients waiting for updates
 
-        self.mpax             = SimpleMultiPaxos(self)
+        self.mpax             = SimpleMultiPaxos(node_uid,
+                                                 quorum_size,
+                                                 sequence_number,
+                                                 self._node_factory,
+                                                 self.on_proposal_resolution)
 
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
@@ -90,8 +96,8 @@ class SimpleNode (object):
 
         self.sub.subscribe = 'zpax'
         
-        self.sub.messageReceived    = self.onSubReceived
-        self.router.messageReceived = self.onRouterReceived
+        self.sub.messageReceived    = self._on_sub_received
+        self.router.messageReceived = self._on_router_received
         
         self.pub.bind(self.local_ps_addr)
         self.router.bind(self.local_rtr_addr)
@@ -104,12 +110,14 @@ class SimpleNode (object):
 
 
     def _node_factory(self, node_uid, leader_uid, quorum_size, resolution_callback):
-        return basic.Node( SimpleHeartbeatProposer(self, leader_uid),
+        return basic.Node( SimpleHeartbeatProposer(self, node_uid, quorum_size, leader_uid),
                            basic.Acceptor(),
                            basic.Learner(quorum_size),
                            resolution_callback )
 
-
+    #
+    # --- Heartbeats ---
+    #
     def _poll_heartbeat(self):
         self.mpax.node.proposer.poll_liveness()
 
@@ -117,7 +125,9 @@ class SimpleNode (object):
     def _pulse_leader_heartbeat(self):
         self.mpax.node.proposer.pulse()
 
-        
+    #
+    # --- Paxos Leadership Changes ---
+    #
     def paxos_on_leadership_acquired(self):
         print self.node_uid, 'I have the leader!', self.mpax.node.proposer.value
         self.heartbeat_pulser.start( SimpleHeartbeatProposer.hb_period )
@@ -137,35 +147,10 @@ class SimpleNode (object):
         print '*** Change of guard: ', prev_leader_uid, new_leader_uid
         self.current_leader = new_leader_uid
 
-
-    def paxos_send_prepare(self, proposal_id):
-        #print self.node_uid, 'sending prepare: ', proposal_id
-        self.publish( dict( type='paxos_prepare', sequence_number=self.sequence_number, node_uid=self.node_uid ),
-                      [proposal_id,] )
-
-        
-    def paxos_send_accept(self, proposal_id, proposal_value):
-        if self.mpax.have_leadership() and (self.accept_retry is None or not self.accept_retry.active()):
-            #print 'Sending accept'
-            self.publish( dict( type='paxos_accept', sequence_number=self.sequence_number, node_uid=self.node_uid ),
-                          [proposal_id, proposal_value] )
-
-            self.accept_retry = reactor.callLater(self.mpax.node.proposer.hb_period, self.paxos_send_accept, proposal_id, proposal_value)
-            
-
-        
-    def paxos_send_heartbeat(self, leader_proposal_id):
-        self.publish( dict( type='paxos_heartbeat', sequence_number=self.sequence_number, node_uid=self.node_uid ),
-                      [leader_proposal_id,] )
-
-
-    def publish(self, *parts):
-        jparts = [ json.dumps(p) for p in parts ]
-        self.pub.send( 'zpax', *jparts )
-        self.onSubReceived(['zpax'] + jparts)
-
-
-    def onSubReceived(self, msg_parts):
+    #
+    # --- Paxos Messaging ---
+    #
+    def _on_sub_received(self, msg_parts):
         '''
         msg_parts - [0] 'zpax'
                     [1] is SimpleNode's JSON-encoded structure
@@ -185,7 +170,6 @@ class SimpleNode (object):
         
         if fobj:
             fobj(*parts)
-
 
 
     def _check_sequence(self, header):
@@ -235,6 +219,38 @@ class SimpleNode (object):
         self.mpax.recv_accepted(header['sequence_number'], header['node_uid'],
                                 tuple(pax[0]), pax[1])
         
+
+    def paxos_send_prepare(self, proposal_id):
+        #print self.node_uid, 'sending prepare: ', proposal_id
+        self.publish( dict( type='paxos_prepare', sequence_number=self.sequence_number, node_uid=self.node_uid ),
+                      [proposal_id,] )
+
+        
+    def paxos_send_accept(self, proposal_id, proposal_value):
+        if self.mpax.have_leadership() and (self.accept_retry is None or not self.accept_retry.active()):
+            #print 'Sending accept'
+            self.publish( dict( type='paxos_accept', sequence_number=self.sequence_number, node_uid=self.node_uid ),
+                          [proposal_id, proposal_value] )
+
+            self.accept_retry = reactor.callLater(self.mpax.node.proposer.hb_period, self.paxos_send_accept, proposal_id, proposal_value)
+            
+
+    def paxos_send_heartbeat(self, leader_proposal_id):
+        self.publish( dict( type='paxos_heartbeat', sequence_number=self.sequence_number, node_uid=self.node_uid ),
+                      [leader_proposal_id,] )
+
+
+    def publish(self, *parts):
+        jparts = [ json.dumps(p) for p in parts ]
+        self.pub.send( 'zpax', *jparts )
+        self._on_sub_received(['zpax'] + jparts)
+
+    #
+    # --- SimpleNode's Pub-Sub Messaging ---
+    #
+    def publish_value(self):
+        self.publish( dict(type='value', sequence_number=self.sequence_number, value=self.value) )
+
         
     def _on_sub_get_value(self, header):
         self.publish_value()
@@ -255,12 +271,10 @@ class SimpleNode (object):
             #print 'Setting proposal'
             self.mpax.set_proposal(self.sequence_number, header['value'])
 
-            
-    def publish_value(self):
-        self.publish( dict(type='value', sequence_number=self.sequence_number, value=self.value) )
-
-
-    def onProposalResolution(self, instance_num, value):
+    #
+    # --- Paxos Proposal Resolution ---
+    #
+    def on_proposal_resolution(self, instance_num, value):
         print '*** Resolution! ', instance_num, repr(value)
         if self.accept_retry is not None:
             self.accept_retry.cancel()
@@ -274,8 +288,11 @@ class SimpleNode (object):
 
         self.waiting_clients.clear()
 
-
-    def onRouterReceived(self, msg_parts):
+    
+    #
+    # --- Router Socket Handling ---
+    #
+    def _on_router_received(self, msg_parts):
         #print 'Router Rec: ', msg_parts
         try:
             addr  = msg_parts[0]
