@@ -1,73 +1,24 @@
+import os.path
 import json
 
-from zpax import tzmq
+from zpax import tzmq, db
+from zpax.simple import SimpleMultiPaxos, SimpleHeartbeatProposer
 from paxos import multi, basic
 from paxos.leaders import heartbeat
 
 from twisted.internet import defer, task, reactor
 
 
-class SimpleHeartbeatProposer (heartbeat.Proposer):
-    hb_period       = 0.5
-    liveness_window = 1.5
 
-    def __init__(self, pax_node, node_uid, quorum_size, leader_uid):
-        self.node = pax_node
-
-        super(SimpleHeartbeatProposer, self).__init__(node_uid,
-                                                      quorum_size,
-                                                      leader_uid = leader_uid)
-
-    def send_prepare(self, proposal_id):
-        self.node.paxos_send_prepare(proposal_id)
-
-    def send_accept(self, proposal_id, proposal_value):
-        self.node.paxos_send_accept(proposal_id, proposal_value)
-
-    def send_heartbeat(self, leader_proposal_id):
-        self.node.paxos_send_heartbeat(leader_proposal_id)
-
-    def schedule(self, msec_delay, func_obj):
-        pass
-
-    def on_leadership_acquired(self):
-        self.node.paxos_on_leadership_acquired()
-
-    def on_leadership_lost(self):
-        self.node.paxos_on_leadership_lost()
-
-    def on_leadership_change(self, prev_leader_uid, new_leader_uid):
-        self.node.paxos_on_leadership_change(prev_leader_uid, new_leader_uid)
-        
-
-
-class SimpleMultiPaxos(multi.MultiPaxos):
-
-    def __init__(self, node_uid, quorum_size, sequence_number, node_factory,
-                 on_resolution_callback):
-
-        self.node_factory     = node_factory
-        self.on_resolution_cb = on_resolution_callback
-        
-        super(SimpleMultiPaxos, self).__init__( node_uid,
-                                                quorum_size,
-                                                sequence_number )
-        
-
-        
-    def on_proposal_resolution(self, instance_num, value):
-        self.on_resolution_cb(instance_num, value)
-    
-
-
-
-class SimpleNode (object):
+class KeyValNode (object):
 
     def __init__(self, node_uid,
                  local_pub_sub_addr,   local_rtr_addr,
                  remote_pub_sub_addrs,
+                 remote_rtr_addrs,
                  quorum_size,
-                 initial_value='', sequence_number=0):
+                 database_dir,
+                 database_filename=None):
 
         self.node_uid         = node_uid
         self.local_ps_addr    = local_pub_sub_addr
@@ -80,9 +31,18 @@ class SimpleNode (object):
 
         self.waiting_clients  = set() # Contains router addresses of clients waiting for updates
 
+        if database_filename is None:
+            database_filename = os.path.join(database_dir, 'db.sqlite')
+            
+        self.db               = db.DB( database_filename )
+
+        seq_num = self.db.get_last_resolution()
+        if seq_num is None:
+            seq_num = 0
+            
         self.mpax             = SimpleMultiPaxos(node_uid,
                                                  quorum_size,
-                                                 sequence_number,
+                                                 seq_num,
                                                  self._node_factory,
                                                  self.on_proposal_resolution)
 

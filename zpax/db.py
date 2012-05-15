@@ -6,7 +6,7 @@ tables = dict()
 tables['kv'] = '''
 key      text PRIMARY KEY,
 value    text,
-proposal integer
+resolution integer
 '''
 
 class DB (object):
@@ -29,7 +29,7 @@ class DB (object):
         for k,v in tables.iteritems():
             cur.execute('create table {} ({})'.format(k,v))
 
-        cur.execute('create index proposal_index on kv (proposal)')
+        cur.execute('create index resolution_index on kv (resolution)')
 
         self._con.commit()
         cur.close()
@@ -41,31 +41,31 @@ class DB (object):
             return r[0]
 
         
-    def get_proposal(self, key):
-        r = self._cur.execute('SELECT proposal FROM kv WHERE key=?', (key,)).fetchone()
+    def get_resolution(self, key):
+        r = self._cur.execute('SELECT resolution FROM kv WHERE key=?', (key,)).fetchone()
         if r:
             return r[0]
 
         
-    def update_key(self, key, value, proposal_number):
-        prevpn = self.get_proposal(key)
-        if prevpn and proposal_number > prevpn:
-            self._cur.execute('UPDATE kv SET value=?, proposal=? WHERE key=?',
-                              (value, proposal_number, key))
+    def update_key(self, key, value, resolution_number):
+        prevpn = self.get_resolution(key)
+        if prevpn and resolution_number > prevpn:
+            self._cur.execute('UPDATE kv SET value=?, resolution=? WHERE key=?',
+                              (value, resolution_number, key))
             self._con.commit()
             
         elif prevpn is None:
             self._cur.execute('INSERT INTO kv VALUES (?, ?, ?)',
-                              (key, value, proposal_number))
+                              (key, value, resolution_number))
             self._con.commit()
 
             
-    def get_last_proposal(self):
-        return self._cur.execute('SELECT MAX(proposal) FROM kv').fetchone()[0]
+    def get_last_resolution(self):
+        return self._cur.execute('SELECT MAX(resolution) FROM kv').fetchone()[0]
 
     
-    def iter_updates(self, start_proposal, end_proposal=2**32):
+    def iter_updates(self, start_resolution, end_resolution=2**32):
         c = self._con.cursor()
-        c.execute('SELECT key,value,proposal FROM kv WHERE proposal>? AND proposal<?  ORDER BY proposal',
-                  (start_proposal, end_proposal))
+        c.execute('SELECT key,value,resolution FROM kv WHERE resolution>? AND resolution<?  ORDER BY resolution',
+                  (start_resolution, end_resolution))
         return c

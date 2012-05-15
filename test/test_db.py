@@ -26,7 +26,7 @@ class BasicDBTest(unittest.TestCase):
         self.db.update_key('foo', 'bish', 6)
         self.assertEquals(self.db.get_value('foo'), 'bish')
 
-    def test_update_ignore_previous_proposal(self):
+    def test_update_ignore_previous_resolution(self):
         self.assertTrue(self.db.get_value('foo') is None)
         self.db.update_key('foo', 'bar', 5)
         self.assertEquals(self.db.get_value('foo'), 'bar')
