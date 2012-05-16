@@ -209,7 +209,10 @@ class ZmqSocket(object):
                 raise e
 
             log.callWithLogger(self, self.messageReceived, msg_list)
-            events = self._zsock.getsockopt(constants.EVENTS)
+
+            # Callback can cause the socket to be closed
+            if self._zsock is not None:
+                events = self._zsock.getsockopt(constants.EVENTS)
 
                 
     def logPrefix(self):

@@ -7,6 +7,8 @@ from twisted.internet import defer, task, reactor
 
 class SimpleNode (node.BasicNode):
 
+    chatty = False
+    
     def __init__(self, node_uid,
                  local_pub_sub_addr,   local_rtr_addr,
                  remote_pub_sub_addrs,
@@ -31,16 +33,23 @@ class SimpleNode (node.BasicNode):
         self.router.bind(self.local_rtr_addr)
 
         
+    def onShutdown(self):
+        self.router.close()
+
+        
     def onLeadershipAcquired(self):
-        print self.node_uid, 'I have the leader!', self.mpax.node.proposer.value
+        if self.chatty:
+            print self.node_uid, 'I have the leader!', self.mpax.node.proposer.value
 
 
     def onLeadershipLost(self):
-        print self.node_uid, 'I LOST the leader!'
+        if self.chatty:
+            print self.node_uid, 'I LOST the leader!'
 
 
     def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
-        print '*** Change of guard: ', prev_leader_uid, new_leader_uid
+        if self.chatty:
+            print '*** Change of guard: ', prev_leader_uid, new_leader_uid
 
 
     def onBehindInSequence(self):
@@ -52,7 +61,8 @@ class SimpleNode (node.BasicNode):
 
 
     def onProposalResolution(self, instance_num, value):
-        print '*** Resolution! ', instance_num, repr(value)
+        if self.chatty:
+            print '*** Resolution! ', instance_num, repr(value)
         
         for addr in self.waiting_clients:
             self.reply_value(addr)
@@ -114,7 +124,8 @@ class SimpleNode (node.BasicNode):
             self.proposeValue(header['sequence_number'], header['value'])
             self.reply(addr, dict(proposed=True))
         except node.ProposalFailed, e:
-            print 'Proposal FAILED: ', str(e)
+            if self.chatty:
+                print 'Proposal FAILED: ', str(e)
             self.reply(addr, dict(proposed=False, message=str(e)))
 
             

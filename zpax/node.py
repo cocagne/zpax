@@ -79,6 +79,8 @@ class BasicMultiPaxos(multi.MultiPaxos):
 
 class BasicNode (object):
 
+    hb_proposer_klass = BasicHeartbeatProposer
+
     def __init__(self, node_uid,
                  local_pub_sub_addr,
                  remote_pub_sub_addrs,
@@ -113,8 +115,9 @@ class BasicNode (object):
         for x in remote_pub_sub_addrs:
             self.sub.connect(x)
 
-        self.heartbeat_poller.start( BasicHeartbeatProposer.liveness_window )
+        self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
 
+    
     #--------------------------------------------------------------------------
     # Subclass API
     #
@@ -152,6 +155,11 @@ class BasicNode (object):
     def onHeartbeat(self, data):
         '''
         data - Dictionary of key=value paris in the heartbeat message
+        '''
+
+    def onShutdown(self):
+        '''
+        Called immediately before shutting down
         '''
 
     def getHeartbeatData(self):
@@ -201,12 +209,21 @@ class BasicNode (object):
         self.pub.send( msg_stack )
         self._on_sub_received( msg_stack )
 
-    
+
+    def shutdown(self):
+        self.onShutdown()
+        self.pub.close()
+        self.sub.close()
+        if self.heartbeat_poller.running:
+            self.heartbeat_poller.stop()
+        if self.heartbeat_pulser.running:
+            self.heartbeat_pulser.stop()
+            
     #--------------------------------------------------------------------------
     # Helper Methods
     #
     def _node_factory(self, node_uid, leader_uid, quorum_size, resolution_callback):
-        return basic.Node( BasicHeartbeatProposer(self, node_uid, quorum_size, leader_uid),
+        return basic.Node( self.hb_proposer_klass(self, node_uid, quorum_size, leader_uid),
                            basic.Acceptor(),
                            basic.Learner(quorum_size),
                            resolution_callback )
@@ -227,7 +244,7 @@ class BasicNode (object):
     # Paxos Leadership Changes 
     #
     def _paxos_on_leadership_acquired(self):
-        self.heartbeat_pulser.start( BasicHeartbeatProposer.hb_period )
+        self.heartbeat_pulser.start( self.hb_proposer_klass.hb_period )
         self.onLeadershipAcquired()
 
         

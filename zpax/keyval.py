@@ -55,6 +55,13 @@ class KeyValNode (node.BasicNode):
         for x in remote_rep_addrs:
             self.req.connect(x)
 
+            
+    def onShutdown(self):
+        self.req.close()
+        self.rep.close()
+        if self.catchup_retry and self.catchup_retry.active():
+            self.catchup_retry.cancel()
+            
 
     def getHeartbeatData(self):
         return dict( seq_num = self.mpax.instance_num )
