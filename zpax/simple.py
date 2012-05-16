@@ -46,6 +46,7 @@ class SimpleNode (node.BasicNode):
     def onBehindInSequence(self):
         self.publish( 'get_value' )
 
+        
     def onOtherNodeBehindInSequence(self, node_uid):
         self.publish_value()
 

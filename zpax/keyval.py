@@ -1,8 +1,7 @@
 import os.path
 import json
 
-from zpax import tzmq, db
-from zpax.simple import SimpleMultiPaxos, SimpleHeartbeatProposer
+from zpax import tzmq, db, node
 from paxos import multi, basic
 from paxos.leaders import heartbeat
 
@@ -10,251 +9,109 @@ from twisted.internet import defer, task, reactor
 
 
 
-class KeyValNode (object):
+class KeyValNode (node.BasicNode):
+
+    CATCHUP_RETRY_DELAY  = 2.0
+    CATCHUP_NUM_ITEMS    = 2
 
     def __init__(self, node_uid,
-                 local_pub_sub_addr,   local_rtr_addr,
+                 local_pub_sub_addr, local_rtr_addr, local_rep_addr,
                  remote_pub_sub_addrs,
-                 remote_rtr_addrs,
+                 remote_rep_addrs,
                  quorum_size,
                  database_dir,
                  database_filename=None):
 
-        self.node_uid         = node_uid
-        self.local_ps_addr    = local_pub_sub_addr
-        self.local_rtr_addr   = local_rtr_addr
-        self.remote_ps_addrs  = remote_pub_sub_addrs
-        self.quorum_size      = quorum_size
-        self.value            = initial_value
-        self.sequence_number  = sequence_number
-        self.accept_retry     = None
-
-        self.waiting_clients  = set() # Contains router addresses of clients waiting for updates
+        self.rtr_addr = local_rtr_addr
+        self.rep_addr = local_rep_addr
+        
+        seq_num = 0 # XXX Integrate Durable Objects into BasicNode
+        
+        super(KeyValNode,self).__init__( node_uid,
+                                         local_pub_sub_addr,
+                                         remote_pub_sub_addrs,
+                                         quorum_size,
+                                         seq_num )
 
         if database_filename is None:
             database_filename = os.path.join(database_dir, 'db.sqlite')
             
-        self.db               = db.DB( database_filename )
-
-        seq_num = self.db.get_last_resolution()
-        if seq_num is None:
-            seq_num = 0
+        self.db            = db.DB( database_filename )
+        self.db_seq        = self.db.get_last_resolution()
+        self.catching_up   = False
+        self.catchup_retry = None
             
-        self.mpax             = SimpleMultiPaxos(node_uid,
-                                                 quorum_size,
-                                                 seq_num,
-                                                 self._node_factory,
-                                                 self.on_proposal_resolution)
+        #self.router        = tzmq.ZmqRouterSocket()
+        self.rep           = tzmq.ZmqRepSocket()
+        self.req           = tzmq.ZmqReqSocket()
 
-        self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
-        self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
+        #self.router.messageReceived = self._on_router_received
+        self.rep.messageReceived    = self._on_rep_received
+        self.req.messageReceived    = self._on_req_received
         
-        self.pub              = tzmq.ZmqPubSocket()
-        self.sub              = tzmq.ZmqSubSocket()
-        self.router           = tzmq.ZmqRouterSocket()
+        #self.router.bind(self.rtr_addr)
+        self.rep.bind(self.rep_addr)
 
-        self.sub.subscribe = 'zpax'
-        
-        self.sub.messageReceived    = self._on_sub_received
-        self.router.messageReceived = self._on_router_received
-        
-        self.pub.bind(self.local_ps_addr)
-        self.router.bind(self.local_rtr_addr)
-
-        for x in remote_pub_sub_addrs:
-            print 'Connecting: ', x
-            self.sub.connect(x)
-
-        self.heartbeat_poller.start( SimpleHeartbeatProposer.liveness_window )
+        for x in remote_rep_addrs:
+            self.req.connect(x)
 
 
-    def _node_factory(self, node_uid, leader_uid, quorum_size, resolution_callback):
-        return basic.Node( SimpleHeartbeatProposer(self, node_uid, quorum_size, leader_uid),
-                           basic.Acceptor(),
-                           basic.Learner(quorum_size),
-                           resolution_callback )
+    def getHeartbeatData(self):
+        return dict( seq_num = self.mpax.instance_num )
+    
+    
+    def onHeartbeat(self, data):
+        if data['seq_num'] - 1 > self.db_seq:
+            if data['seq_num'] > self.mpax.instance_num:
+                self.slewSequenceNumber( data['seq_num'] )
 
-    #
-    # --- Heartbeats ---
-    #
-    def _poll_heartbeat(self):
-        self.mpax.node.proposer.poll_liveness()
+            self.catchup()
 
-        
-    def _pulse_leader_heartbeat(self):
-        self.mpax.node.proposer.pulse()
 
-    #
-    # --- Paxos Leadership Changes ---
-    #
-    def paxos_on_leadership_acquired(self):
+    # Override the sequence checking function in the baseclass to cause all
+    # packets to be dropped from our Paxos implementation while our database
+    # is behind
+    def _check_sequence(self, header):
+        return super(KeyValNode,self)._check_sequence(header) and not self.catching_up
+
+    
+    def onLeadershipAcquired(self):
         print self.node_uid, 'I have the leader!', self.mpax.node.proposer.value
-        self.heartbeat_pulser.start( SimpleHeartbeatProposer.hb_period )
 
-        
-    def paxos_on_leadership_lost(self):
+
+    def onLeadershipLost(self):
         print self.node_uid, 'I LOST the leader!'
-        if self.accept_retry is not None:
-            self.accept_retry.cancel()
-            self.accept_retry = None
-            
-        if self.heartbeat_pulser.running:
-            self.heartbeat_pulser.stop()
 
 
-    def paxos_on_leadership_change(self, prev_leader_uid, new_leader_uid):
+    def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
         print '*** Change of guard: ', prev_leader_uid, new_leader_uid
 
-    #
-    # --- Paxos Messaging ---
-    #
-    def _on_sub_received(self, msg_parts):
-        '''
-        msg_parts - [0] 'zpax'
-                    [1] is SimpleNode's JSON-encoded structure
-                    [2] If present, it's a JSON-encoded Paxos message
-        '''
-        try:
-            parts = [ json.loads(p) for p in msg_parts[1:] ]
-        except ValueError:
-            print 'Invalid JSON: ', msg_parts
-            return
 
-        if not 'type' in parts[0]:
-            print 'Missing message type'
-            return
-
-        fobj = getattr(self, '_on_sub_' + parts[0]['type'], None)
-        
-        if fobj:
-            fobj(*parts)
-
-
-    def _check_sequence(self, header):
-        if header['sequence_number'] > self.sequence_number:
-            self.publish( dict( type='get_value' ) )
-
-        if header['sequence_number'] < self.sequence_number:
-            self.publish_value()
-
-
-    def _on_sub_paxos_heartbeat(self, header, pax):
-        self.mpax.node.proposer.recv_heartbeat( tuple(pax[0]) )
-
-    
-    def _on_sub_paxos_prepare(self, header, pax):
-        #print self.node_uid, 'got prepare', header, pax
-        self._check_sequence(header)
-        r = self.mpax.recv_prepare(header['sequence_number'], tuple(pax[0]))
-        if r:
-            #print self.node_uid, 'sending promise'
-            self.publish( dict( type='paxos_promise', sequence_number=self.sequence_number, node_uid=self.node_uid ),
-                          r )
-
-            
-    def _on_sub_paxos_promise(self, header, pax):
-        #print self.node_uid, 'got promise', header, pax
-        self._check_sequence(header)
-        r = self.mpax.recv_promise(header['sequence_number'], header['node_uid'],
-                                   tuple(pax[0]), tuple(pax[1]) if pax[1] else None, pax[2])
-        if r and r[1] is not None:
-            #print self.node_uid, 'sending accept', r
-            self.paxos_send_accept( *r )
-            
-
-    def _on_sub_paxos_accept(self, header, pax):
-        #print 'Got Accept!', pax
-        self._check_sequence(header)
-        r = self.mpax.recv_accept_request(header['sequence_number'], tuple(pax[0]), pax[1])
-        if r:
-            self.publish( dict( type='paxos_accepted', sequence_number=self.sequence_number, node_uid=self.node_uid ),
-                          r )
-
-
-    def _on_sub_paxos_accepted(self, header, pax):
-        #print 'Got accepted', header, pax
-        self._check_sequence(header)
-        self.mpax.recv_accepted(header['sequence_number'], header['node_uid'],
-                                tuple(pax[0]), pax[1])
-        
-
-    def paxos_send_prepare(self, proposal_id):
-        #print self.node_uid, 'sending prepare: ', proposal_id
-        self.publish( dict( type='paxos_prepare', sequence_number=self.sequence_number, node_uid=self.node_uid ),
-                      [proposal_id,] )
+    def onBehindInSequence(self):
+        self.catchup()
 
         
-    def paxos_send_accept(self, proposal_id, proposal_value):
-        if self.mpax.have_leadership() and (self.accept_retry is None or not self.accept_retry.active()):
-            #print 'Sending accept'
-            self.publish( dict( type='paxos_accept', sequence_number=self.sequence_number, node_uid=self.node_uid ),
-                          [proposal_id, proposal_value] )
-
-            self.accept_retry = reactor.callLater(self.mpax.node.proposer.hb_period, self.paxos_send_accept, proposal_id, proposal_value)
-            
-
-    def paxos_send_heartbeat(self, leader_proposal_id):
-        self.publish( dict( type='paxos_heartbeat', sequence_number=self.sequence_number, node_uid=self.node_uid ),
-                      [leader_proposal_id,] )
-
-
-    def publish(self, *parts):
-        jparts = [ json.dumps(p) for p in parts ]
-        self.pub.send( 'zpax', *jparts )
-        self._on_sub_received(['zpax'] + jparts)
-
-    #
-    # --- SimpleNode's Pub-Sub Messaging ---
-    #
-    def publish_value(self):
-        self.publish( dict(type='value', sequence_number=self.sequence_number, value=self.value) )
-
+    def onProposalResolution(self, instance_num, value):
+        # This method is only called when our database is current
         
-    def _on_sub_get_value(self, header):
-        self.publish_value()
-        
-
-    def _on_sub_value(self, header):
-        if header['sequence_number'] > self.sequence_number:
-            self.value           = header['value']
-            self.sequence_number = header['sequence_number']
-            if self.mpax.node.proposer.leader:
-                self.paxos_on_leadership_lost()
-            self.mpax.set_instance_number(self.sequence_number)
-
-            
-    def _on_sub_value_proposal(self, header):
-        #print 'Proposal made. Seq = ', self.sequence_number, 'Req: ', header
-        if header['sequence_number'] == self.sequence_number:
-            #print 'Setting proposal'
-            self.mpax.set_proposal(self.sequence_number, header['value'])
-
-    #
-    # --- Paxos Proposal Resolution ---
-    #
-    def on_proposal_resolution(self, instance_num, value):
         print '*** Resolution! ', instance_num, repr(value)
-        if self.accept_retry is not None:
-            self.accept_retry.cancel()
-            self.accept_retry = None
-            
-        self.value            = value
-        self.sequence_number  = instance_num + 1
 
-        for addr in self.waiting_clients:
-            self.reply_value(addr)
+        print '** DECODED: ', json.loads(value)
 
-        self.waiting_clients.clear()
+        key, value = json.loads(value)
+        
+        self.db.update_key( key, value, instance_num )
 
-    
+        self.db_seq = instance_num
+        
+
+    #-------------------------------
+    # Req Socket Messaging
     #
-    # --- Router Socket Handling ---
-    #
-    def _on_router_received(self, msg_parts):
-        #print 'Router Rec: ', msg_parts
+    def _on_req_received(self, msg_parts):
+        #print 'Req Rec: ', msg_parts
         try:
-            addr  = msg_parts[0]
-            parts = [ json.loads(p) for p in msg_parts[2:] ]
+            parts = [ json.loads(p) for p in msg_parts ]
         except ValueError:
             print 'Invalid JSON: ', msg_parts
             return
@@ -263,47 +120,106 @@ class KeyValNode (object):
             print 'Missing message type', parts
             return
 
-        fobj = getattr(self, '_on_router_' + parts[0]['type'], None)
+        fobj = getattr(self, '_on_req_' + parts[0]['type'], None)
         
         if fobj:
-            fobj(addr, *parts)
+            fobj(*parts)
+
+
+    def _on_req_catchup_data(self, msg):
+        print 'CATCHUP MSG: ', msg
+        print 'Catchup Data({},{}): '.format(msg['from_seq'], self.db_seq),
+        print ', '.join( '({}{}{})'.format(*t) for t in msg['key_val_seq_list'] )
+        
+        if self.catchup_retry and self.catchup_retry.active():
+            self.catchup_retry.cancel()
+            self.catchup_retry = None
+            
+        if msg['from_seq'] == self.db_seq:
+            for key, val, seq_num in msg['key_val_seq_list']:
+                # XXX Convert to updating all keys in one commit
+                self.db.update_key(key, val, seq_num)
+                
+            self.db_seq = self.db.get_last_resolution()
+
+            print 'LAST RESOLUTION: ', self.db.get_last_resolution()
+                    
+        self._catchup()
+
+
+    def catchup(self):
+        if self.catching_up or self.db_seq == self.mpax.instance_num - 1:
+            return 
+        
+        self._catchup()
+
+        
+    def _catchup(self):
+        print '_catchup(): ',
+        self.catching_up = self.db_seq != self.mpax.instance_num - 1
+        
+        if not self.catching_up:
+            print '*** CAUGHT UP!! ***'
+            return
+        print 'Requesting next batch from ', self.db_seq
+
+        self.catchup_retry = reactor.callLater(self.CATCHUP_RETRY_DELAY,
+                                               self._catchup)
+
+        self.req.send( json.dumps( dict(type='catchup_request', last_known_seq=self.db_seq) ) )
+    
+            
+    #-------------------------------
+    # Rep Socket Messaging
+    #
+    def _on_rep_received(self, msg_parts):
+        print 'Rep Rec: ', msg_parts
+        try:
+            parts = [ json.loads(p) for p in msg_parts ]
+        except ValueError:
+            print 'Invalid JSON: ', msg_parts
+            return
+
+        if not parts or not 'type' in parts[0]:
+            print 'Missing message type', parts
+            return
+
+        fobj = getattr(self, '_on_rep_' + parts[0]['type'], None)
+        
+        if fobj:
+            fobj(*parts)
 
             
-    def reply(self, addr, *parts):
-        jparts = [ json.dumps(p) for p in parts ]
-        self.router.send( addr, '', *jparts )
+    def rep_reply(self, **kwargs):
+        self.rep.send( json.dumps(kwargs) )
 
         
-    def reply_value(self, addr):
-        self.reply(addr, dict(sequence_number=self.sequence_number-1, value=self.value) )
-
-        
-    def _on_router_propose_value(self, addr, header):
-        if header['sequence_number'] == self.sequence_number:
-            print 'Proposing...', header['value']
-            self.publish( dict(type='value_proposal', sequence_number=self.sequence_number, value=header['value']) )
-            self.mpax.set_proposal(self.sequence_number, header['value'])
-            self.reply(addr, dict(proposed=True))
-        else:
-            print 'Proposal rejected. Seq not match! Seq is', self.sequence_number
-            self.reply(addr, dict(proposed=False, message='Invalid sequence number'))
+    def _on_rep_propose_value(self, header):
+        print 'Proposing ', header
+        try:
+            jstr = json.dumps( [header['key'], header['value']] )
+            self.proposeValue(self.mpax.instance_num, jstr)
+            self.rep_reply( proposed = True )
+        except node.ProposalFailed, e:
+            print 'Proposal FAILED: ', str(e)
+            self.rep_reply(proposed=False, message=str(e))
 
             
-    def _on_router_query_value(self, addr, header):
-        self.reply_value(addr)
-
-        
-    def _on_router_get_next_value(self, addr, header):
-        if header['sequence_number'] < self.sequence_number:
-            self.reply_value(addr)
-        else:
-            self.waiting_clients.add( addr )
-        
-
-        
-        
+    def _on_rep_query_value(self, header):
+        print 'Querying ', header
+        print 'DB RESULT: ', self.db.get_value(header['key'])
+        self.rep_reply( value = self.db.get_value(header['key']) )
 
 
-
+    def _on_rep_catchup_request(self, header):
+        l = list()
         
+        for tpl in self.db.iter_updates(header['last_known_seq']):
+            l.append( tpl )
+            if len(l) == self.CATCHUP_NUM_ITEMS:
+                break
+
+        self.rep_reply( type             = 'catchup_data',
+                        from_seq         = header['last_known_seq'],
+                        key_val_seq_list = l )
         

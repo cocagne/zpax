@@ -1,0 +1,73 @@
+#!/usr/bin/python
+
+import sys
+import os.path
+import json
+
+pd = os.path.dirname
+
+this_dir = pd(os.path.abspath(__file__))
+
+sys.path.append( pd(this_dir) )
+sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
+
+import zmq
+from zmq.core import constants
+
+import select
+
+from twisted.internet import reactor, defer
+
+from zpax import tzmq
+
+INIT_COUNT=15
+
+ids = dict( a = 1, b = 2, c = 3 )
+
+node = sys.argv[1]
+key  = sys.argv[2] if len(sys.argv) > 2 else None
+val  = sys.argv[3] if len(sys.argv) > 3 else None
+
+if len(sys.argv) < 2:
+    print 'cmd <node> <key> [value]'
+
+def doit():
+
+    s = tzmq.ZmqReqSocket()
+
+    o = type('o', (object,), {})()
+
+    o.count = 0
+
+    def recv(msg_parts):
+        msg_parts = [str(x) for x in msg_parts]
+        print '{}({}): '.format(node, val), msg_parts
+        
+        if key == 'init':
+            if json.loads(msg_parts[-1])['proposed']:
+                o.count += 1
+            if o.count == INIT_COUNT:
+                reactor.stop()
+            else:
+                s.send( json.dumps( dict(type='propose_value',
+                                         key='foo{}'.format(o.count),
+                                         value='foo{}'.format(o.count)) ) )
+        else:
+            reactor.stop()
+
+    s.messageReceived = recv
+
+    s.connect('tcp://localhost:444{}'.format(ids[node]))
+
+    if val:
+        s.send( json.dumps( dict(type='propose_value', key=key, value=val) ) )
+    elif key == 'init':
+        s.send( json.dumps( dict(type='propose_value', key='foo0', value='foo0') ) )
+    elif key:
+        s.send( json.dumps( dict(type='query_value', key=key) ) )
+
+        
+reactor.callWhenRunning(doit)
+reactor.run()
+
+

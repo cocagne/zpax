@@ -49,19 +49,24 @@ class DB (object):
         
     def update_key(self, key, value, resolution_number):
         prevpn = self.get_resolution(key)
-        if prevpn and resolution_number > prevpn:
-            self._cur.execute('UPDATE kv SET value=?, resolution=? WHERE key=?',
-                              (value, resolution_number, key))
-            self._con.commit()
-            
-        elif prevpn is None:
+        print 'PREV REV', prevpn, 'NEW REV', resolution_number
+
+        if prevpn is None:
             self._cur.execute('INSERT INTO kv VALUES (?, ?, ?)',
                               (key, value, resolution_number))
+            self._con.commit()
+            
+        elif resolution_number > prevpn:
+            print 'UPDATING TO: ', value
+            self._cur.execute('UPDATE kv SET value=?, resolution=? WHERE key=?',
+                              (value, resolution_number, key))
             self._con.commit()
 
             
     def get_last_resolution(self):
-        return self._cur.execute('SELECT MAX(resolution) FROM kv').fetchone()[0]
+        r = self._cur.execute('SELECT MAX(resolution) FROM kv').fetchone()[0]
+
+        return r if r is not None else -1
 
     
     def iter_updates(self, start_resolution, end_resolution=2**32):

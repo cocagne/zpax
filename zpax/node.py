@@ -21,7 +21,7 @@ class SequenceMismatch(ProposalFailed):
         
 class ValueAlreadyProposed(ProposalFailed):
     
-    def __init__(self, curent):
+    def __init__(self):
         super(ValueAlreadyProposed,self).__init__('Value Already Proposed')
 
 
@@ -93,11 +93,11 @@ class BasicNode (object):
         self.accept_retry     = None
 
         self.mpax             = BasicMultiPaxos(node_uid,
-                                                 quorum_size,
-                                                 sequence_number,
-                                                 self._node_factory,
-                                                 self._on_proposal_resolution)
-
+                                                quorum_size,
+                                                sequence_number,
+                                                self._node_factory,
+                                                self._on_proposal_resolution)
+        
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
         
@@ -119,23 +119,47 @@ class BasicNode (object):
     # Subclass API
     #
     def onLeadershipAcquired(self):
-        pass
+        '''
+        Called when this node acquires Paxos leadership
+        '''
 
     def onLeadershipLost(self):
-        pass
+        '''
+        Called when this node looses Paxos leadership
+        '''
 
     def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
-        pass
+        '''
+        Called whenver Paxos leadership changes.
+        '''
 
     def onBehindInSequence(self):
-        pass
+        '''
+        Called when this node's sequence number is behind the current value
+        '''
 
     def onOtherNodeBehindInSequence(self, node_uid):
-        pass
+        '''
+        Called when a request from another node on the network is using an out-of-date
+        sequence number
+        '''
 
     def onProposalResolution(self, instance_num, value):
-        pass
+        '''
+        Called when an instance of the Paxos algorithm agrees on a value
+        '''
 
+    def onHeartbeat(self, data):
+        '''
+        data - Dictionary of key=value paris in the heartbeat message
+        '''
+
+    def getHeartbeatData(self):
+        '''
+        Returns a dictionary of key=value parameters to be included
+        in the heartbeat message
+        '''
+        return {}
     
     def slewSequenceNumber(self, new_sequence_number):
         assert new_sequence_number > self.sequence_number
@@ -154,20 +178,14 @@ class BasicNode (object):
 
         if self.mpax.node.proposer.value is not None:
             raise ValueAlreadyProposed()
+
+        if self.mpax.node.acceptor.accepted_value is not None:
+            raise ValueAlreadyProposed()
         
         self.publish( 'value_proposal', dict(value=value) )
         self.mpax.set_proposal(self.sequence_number, value)
-    
-    #--------------------------------------------------------------------------
-    # Helper Methods
-    #
-    def _node_factory(self, node_uid, leader_uid, quorum_size, resolution_callback):
-        return basic.Node( BasicHeartbeatProposer(self, node_uid, quorum_size, leader_uid),
-                           basic.Acceptor(),
-                           basic.Learner(quorum_size),
-                           resolution_callback )
 
-    
+
     def publish(self, message_type, *parts):
         if not parts:
             parts = [{}]
@@ -183,7 +201,17 @@ class BasicNode (object):
         self.pub.send( msg_stack )
         self._on_sub_received( msg_stack )
 
-        
+    
+    #--------------------------------------------------------------------------
+    # Helper Methods
+    #
+    def _node_factory(self, node_uid, leader_uid, quorum_size, resolution_callback):
+        return basic.Node( BasicHeartbeatProposer(self, node_uid, quorum_size, leader_uid),
+                           basic.Acceptor(),
+                           basic.Learner(quorum_size),
+                           resolution_callback )
+
+            
     #--------------------------------------------------------------------------
     # Heartbeats 
     #
@@ -257,6 +285,7 @@ class BasicNode (object):
 
     def _on_sub_paxos_heartbeat(self, header, pax):
         self.mpax.node.proposer.recv_heartbeat( tuple(pax[0]) )
+        self.onHeartbeat( header )
 
     
     def _on_sub_paxos_prepare(self, header, pax):
@@ -318,8 +347,7 @@ class BasicNode (object):
             
 
     def _paxos_send_heartbeat(self, leader_proposal_id):
-        self.publish( 'paxos_heartbeat', {}, [leader_proposal_id,] )
-
+        self.publish( 'paxos_heartbeat', self.getHeartbeatData(), [leader_proposal_id,] )
 
         
     #--------------------------------------------------------------------------
@@ -328,9 +356,11 @@ class BasicNode (object):
     def _on_sub_value_proposal(self, header):
         #print 'Proposal made. Seq = ', self.sequence_number, 'Req: ', header
         if header['seq_num'] == self.sequence_number:
-            #print 'Setting proposal'
-            self.mpax.set_proposal(self.sequence_number, header['value'])
+            if self.mpax.node.acceptor.accepted_value is None:
+                #print 'Setting proposal'
+                self.mpax.set_proposal(self.sequence_number, header['value'])
 
+                
     #--------------------------------------------------------------------------
     # Paxos Proposal Resolution 
     #
