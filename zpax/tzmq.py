@@ -1,3 +1,11 @@
+'''
+This module wraps the pyzmq interface in a thin layer that integrates with
+the Twisted reactor. Unlike txZMQ (upon which this code is based) no
+attempt is made to change the API to conform with Twisted norms. The
+goal of this module is simply to integrate ZeroMQ sockets as-is into the
+Twisted reactor.
+'''
+
 from collections import deque
 
 from zmq.core         import constants, error

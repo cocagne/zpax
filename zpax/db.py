@@ -1,3 +1,6 @@
+'''
+This module provides a simple key=value database on top of sqlite.
+'''
 import os.path
 import sqlite3
 
@@ -49,7 +52,7 @@ class DB (object):
         
     def update_key(self, key, value, resolution_number):
         prevpn = self.get_resolution(key)
-        print 'PREV REV', prevpn, 'NEW REV', resolution_number
+        #print 'PREV REV', prevpn, 'NEW REV', resolution_number
 
         if prevpn is None:
             self._cur.execute('INSERT INTO kv VALUES (?, ?, ?)',
@@ -57,7 +60,7 @@ class DB (object):
             self._con.commit()
             
         elif resolution_number > prevpn:
-            print 'UPDATING TO: ', value
+            #print 'UPDATING TO: ', value
             self._cur.execute('UPDATE kv SET value=?, resolution=? WHERE key=?',
                               (value, resolution_number, key))
             self._con.commit()

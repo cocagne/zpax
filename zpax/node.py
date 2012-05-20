@@ -78,6 +78,12 @@ class BasicMultiPaxos(multi.MultiPaxos):
 
 
 class BasicNode (object):
+    '''
+    This class provides the basic functionality required for Multi-Paxos
+    over ZeroMQ Publish/Subscribe sockets. This class follows the GoF95
+    template design pattern and delegates all application level logic to
+    a subclass.
+    '''
 
     hb_proposer_klass = BasicHeartbeatProposer
 
