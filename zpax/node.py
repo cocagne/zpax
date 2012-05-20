@@ -212,6 +212,8 @@ class BasicNode (object):
 
     def shutdown(self):
         self.onShutdown()
+        if self.accept_retry is not None and self.accept_retry.active():
+            self.accept_retry.cancel()
         self.pub.close()
         self.sub.close()
         if self.heartbeat_poller.running:

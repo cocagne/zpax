@@ -121,6 +121,8 @@ class SimpleNode (node.BasicNode):
         
     def _on_router_propose_value(self, addr, header):
         try:
+            if self.chatty:
+                print "Proposing value: ", self.sequence_number, header['value']
             self.proposeValue(header['sequence_number'], header['value'])
             self.reply(addr, dict(proposed=True))
         except node.ProposalFailed, e:
