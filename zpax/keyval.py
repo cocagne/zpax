@@ -10,6 +10,19 @@ from twisted.internet import defer, task, reactor
 
 
 class KeyValNode (node.BasicNode):
+    '''
+    This class implements a distributed key=value database that uses
+    Paxos to coordinate database updates. Unlike the replacated state
+    machine design typically discussed in Paxos literature, this implementation
+    takes a simpler approach to ensure consistency. Each key/value update
+    includes in the database the Multi-Paxos instance number used to set
+    the value for that key. When a node sees an instance number ahead of what
+    it thinks is the current number, it continually requests key-value pairs
+    with greater instance ids from peer nodes. These are returned in sorted
+    order. When the node detects that the current Paxos instance is 1 greater
+    than it's most recent database entry, it knows that it is consistent
+    with it's peers and will begin participating in Paxos instance resolutions.
+    '''
 
     CATCHUP_RETRY_DELAY  = 2.0
     CATCHUP_NUM_ITEMS    = 2
