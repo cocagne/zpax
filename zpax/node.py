@@ -3,7 +3,7 @@ import json
 from zpax import tzmq
 
 from paxos import multi, basic
-from paxos.leaders import heartbeat
+from paxos.proposers import heartbeat
 
 from twisted.internet import defer, task, reactor
 
