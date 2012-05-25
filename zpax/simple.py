@@ -131,7 +131,7 @@ class SimpleNode (node.BasicNode):
         try:
             if self.chatty:
                 print "Proposing value: ", self.sequence_number, header['value']
-            self.proposeValue(header['sequence_number'], header['value'])
+            self.proposeValue(header['value'], header['sequence_number'])
             self.reply(addr, dict(proposed=True))
         except node.ProposalFailed, e:
             if self.chatty:

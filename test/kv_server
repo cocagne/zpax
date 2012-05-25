@@ -30,7 +30,7 @@ def doit():
     pubs = [ 'tcp://127.0.0.1:333{}'.format(x) for x in ids.values() ]
     reps = [ 'tcp://127.0.0.1:444{}'.format(x) for x in ids.values() ]
 
-    snode = keyval.KeyValNode( lcl_pub, lcl_pub, '', lcl_rep,
+    snode = keyval.KeyValueDB( lcl_pub, lcl_pub, lcl_rep,
                                pubs, reps, 2, '/tmp', ':memory:' )
     
 

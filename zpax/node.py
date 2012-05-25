@@ -174,6 +174,11 @@ class BasicNode (object):
         in the heartbeat message
         '''
         return {}
+
+    
+    def currentInstanceNum(self):
+        return self.mpax.instance_num
+
     
     def slewSequenceNumber(self, new_sequence_number):
         assert new_sequence_number > self.sequence_number
@@ -186,8 +191,8 @@ class BasicNode (object):
         self.mpax.set_instance_number(self.sequence_number)
 
         
-    def proposeValue(self, sequence_number, value):
-        if not sequence_number == self.sequence_number:
+    def proposeValue(self, value, sequence_number=None):
+        if sequence_number is not None and not sequence_number == self.sequence_number:
             raise SequenceMismatch( self.sequence_number )
 
         if self.mpax.node.proposer.value is not None:
