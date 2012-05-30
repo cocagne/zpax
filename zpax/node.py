@@ -115,24 +115,39 @@ class BasicNode (JSONResponder):
     over ZeroMQ Publish/Subscribe sockets. This class follows the GoF95
     template design pattern and delegates all application level logic to
     a subclass.
+
+    This class uses two paris of sockets. One is the Publish/Subscribe pair
+    for sending Paxos protocol messages. The second is a Req/Rep pair used
+    for communication with the current leader. As the leader is the one that
+    must propose the value, the proposeValue() method uses the Req socket to
+    forward the request to the current leader's Rep socket. This is infinitely
+    retried until an acknoledgement is received from the leader. When leadership
+    changes and the proposed value is still outstanding, the proposal is sent
+    to the new leader and infinitely retried until an acknowledgement is
+    received.
     '''
 
     hb_proposer_klass = BasicHeartbeatProposer
 
-    def __init__(self, node_uid,
+    def __init__(self,
+                 local_rep_addr,
                  local_pub_sub_addr,
                  remote_pub_sub_addrs,
                  quorum_size,
                  sequence_number=0):
 
-        self.node_uid         = node_uid
+        self.node_uid         = local_rep_addr
+        self.local_rep_addr   = local_rep_addr
         self.local_ps_addr    = local_pub_sub_addr
         self.remote_ps_addrs  = remote_pub_sub_addrs
         self.quorum_size      = quorum_size
         self.sequence_number  = sequence_number
         self.accept_retry     = None
 
-        self.mpax             = BasicMultiPaxos(node_uid,
+        self.current_proposal = None
+        self.proposal_retry   = None
+
+        self.mpax             = BasicMultiPaxos(self.node_uid,
                                                 quorum_size,
                                                 sequence_number,
                                                 self._node_factory,
@@ -140,17 +155,22 @@ class BasicNode (JSONResponder):
         
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
-        
-        self.pub              = tzmq.ZmqPubSocket()
-        self.sub              = tzmq.ZmqSubSocket()
 
-        self.sub.subscribe       = 'zpax'        
-        self.sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
+        self.pax_rep          = tzmq.ZmqRepSocket()
+        self.pax_req          = None                # Assigned on leadership change
+        self.pax_pub          = tzmq.ZmqPubSocket()
+        self.pax_sub          = tzmq.ZmqSubSocket()
+
+        self.pax_rep.bind(self.local_rep_addr)
+        self.pax_pub.bind(self.local_ps_addr)
         
-        self.pub.bind(self.local_ps_addr)
+        self.pax_sub.subscribe       = 'zpax'        
+        self.pax_sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
+
+        self.pax_rep.messageReceived = self._generateResponder('_REP_')
 
         for x in remote_pub_sub_addrs:
-            self.sub.connect(x)
+            self.pax_sub.connect(x)
 
         self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
 
@@ -225,6 +245,8 @@ class BasicNode (JSONResponder):
     
     def slewSequenceNumber(self, new_sequence_number):
         assert new_sequence_number > self.sequence_number
+
+        self._cancel_proposal()
         
         self.sequence_number = new_sequence_number
         
@@ -243,9 +265,8 @@ class BasicNode (JSONResponder):
 
         if self.mpax.node.acceptor.accepted_value is not None:
             raise ValueAlreadyProposed()
-        
-        self.publish( 'value_proposal', dict(value=value) )
-        self.mpax.set_proposal(self.sequence_number, value)
+
+        self._set_proposal(value)
 
 
     def publish(self, message_type, *parts):
@@ -260,16 +281,21 @@ class BasicNode (JSONResponder):
 
         msg_stack.extend( json.dumps(p) for p in parts )
         
-        self.pub.send( msg_stack )
-        self.sub.messageReceived( msg_stack )
+        self.pax_pub.send( msg_stack )
+        self.pax_sub.messageReceived( msg_stack )
 
 
     def shutdown(self):
         self.onShutdown()
+        self._cancel_proposal()
         if self.accept_retry is not None and self.accept_retry.active():
             self.accept_retry.cancel()
-        self.pub.close()
-        self.sub.close()
+        self.pax_rep.close()
+        self.pax_rep = None
+        if self.pax_req is not None:
+            self.pax_req.close()
+        self.pax_pub.close()
+        self.pax_sub.close()
         if self.heartbeat_poller.running:
             self.heartbeat_poller.stop()
         if self.heartbeat_pulser.running:
@@ -307,7 +333,41 @@ class BasicNode (JSONResponder):
                            basic.Learner(quorum_size),
                            resolution_callback )
 
+
+    def _set_proposal(self, value):
+        if self.current_proposal is None:
+            d = dict( type     = 'propose_value',
+                      node_uid = self.node_uid,
+                      seq_num  = self.sequence_number,
+                      value    = value)
             
+            self.current_proposal = json.dumps(d)
+
+            self._try_propose()
+
+            
+    def _try_propose(self):
+        if self.current_proposal:
+            if self.proposal_retry and self.proposal_retry.active():
+                self.proposal_retry.cancel()
+
+            retry_delay = self.mpax.node.proposer.hb_period
+            
+            self.proposal_retry = reactor.callLater(retry_delay, self._try_propose)
+
+            if self.pax_req:
+                self.pax_req.send( self.current_proposal )
+        else:
+            self.proposal_retry = None
+
+            
+    def _cancel_proposal(self):
+        if self.proposal_retry and self.proposal_retry.active():
+            self.proposal_retry.cancel()
+        self.current_proposal = None
+        self.proposal_retry   = None
+        
+        
     #--------------------------------------------------------------------------
     # Heartbeats 
     #
@@ -339,6 +399,20 @@ class BasicNode (JSONResponder):
 
 
     def _paxos_on_leadership_change(self, prev_leader_uid, new_leader_uid):
+        if self.pax_rep is None:
+            return # Ignore this if shutdown() has been called
+        
+        if self.pax_req is not None:
+            self.pax_req.close()
+            
+        self.pax_req = tzmq.ZmqReqSocket()
+
+        self.pax_req.messageReceived = self._generateResponder('_REQ_')
+        
+        self.pax_req.connect( new_leader_uid )
+
+        self._try_propose()
+        
         self.onLeadershipChanged(prev_leader_uid, new_leader_uid)
 
         
@@ -411,22 +485,35 @@ class BasicNode (JSONResponder):
     def _paxos_send_heartbeat(self, leader_proposal_id):
         self.publish( 'paxos_heartbeat', self.getHeartbeatData(), [leader_proposal_id,] )
 
-        
+
     #--------------------------------------------------------------------------
-    # BasicNode's Pub-Sub Messaging 
+    # Request Messaging 
     #   
-    def _SUB_value_proposal(self, header):
+    def _REQ_value_proposed(self, header):
+        if self.proposal_retry and self.proposal_retry.active():
+            self.proposal_retry.cancel()
+            self.proposal_retry = None
+
+            
+    #--------------------------------------------------------------------------
+    # Reply Messaging 
+    #   
+    def _REP_propose_value(self, header):
         #print 'Proposal made. Seq = ', self.sequence_number, 'Req: ', header
         if header['seq_num'] == self.sequence_number:
             if self.mpax.node.acceptor.accepted_value is None:
                 #print 'Setting proposal'
                 self.mpax.set_proposal(self.sequence_number, header['value'])
+                
+        self.pax_rep.send( json.dumps(dict(type='value_proposed')) )
 
                 
     #--------------------------------------------------------------------------
     # Paxos Proposal Resolution 
     #
     def _on_proposal_resolution(self, instance_num, value):
+        self._cancel_proposal()
+        
         if self.accept_retry is not None:
             self.accept_retry.cancel()
             self.accept_retry = None

@@ -150,7 +150,9 @@ class ZmqSocket(object):
 
 
     def __repr__(self):
-        return "ZmqSocket(%s)" % repr(self._zsock)
+        t = _type_map[ self.socketType ].lower()
+        t = t[0].upper() + t[1:]
+        return "Zmq%sSocket(%s)" % (t, repr(self._zsock))
 
 
     def fileno(self):
@@ -274,6 +276,19 @@ class ZmqSocket(object):
         """
         raise NotImplementedError(self)
 
+
+_type_map = dict( PUB    = PUB,
+                  SUB    = SUB,
+                  REQ    = REQ,
+                  REP    = REP,
+                  PUSH   = PUSH,
+                  PULL   = PULL,
+                  ROUTER = ROUTER,
+                  DEALER = DEALER,
+                  PAIR   = PAIR )
+
+for k,v in _type_map.items():
+    _type_map[v] = k
 
 class ZmqPubSocket(ZmqSocket):
     socketType = PUB

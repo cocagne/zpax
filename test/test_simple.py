@@ -30,6 +30,8 @@ class TestKV (simple.SimpleNode):
 
     hb_proposer_klass = TestHBP
 
+    #chatty=True
+
 
 
 class TestReq(tzmq.ZmqReqSocket):
@@ -77,7 +79,7 @@ class SimpleTest(unittest.TestCase):
         for node_name in node_names.split():
             if not node_name in all_nodes:
                 continue
-            n = TestKV( 'ipc:///tmp/ts_{}_pub'.format(node_name),
+            n = TestKV( 'ipc:///tmp/ts_{}_rep'.format(node_name),
                         'ipc:///tmp/ts_{}_pub'.format(node_name),
                         'ipc:///tmp/ts_{}_rtr'.format(node_name),
                         ['ipc:///tmp/ts_{}_pub'.format(n) for n in all_nodes],

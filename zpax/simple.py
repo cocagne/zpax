@@ -86,11 +86,11 @@ class SimpleNode (node.BasicNode):
         self.publish( 'value', dict(value=self.value) )
 
         
-    def _on_sub_get_value(self, header):
+    def _SUB_get_value(self, header):
         self.publish_value()
         
 
-    def _on_sub_value(self, header):
+    def _SUB_value(self, header):
         if header['seq_num'] > self.sequence_number:
             self.value = header['value']
             self.slewSequenceNumber(header['seq_num'])

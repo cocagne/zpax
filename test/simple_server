@@ -24,13 +24,15 @@ def doit():
     global snode
     
     i = sys.argv[1]
+    lcl_rep = 'tcp://127.0.0.1:222{}'.format(ids[i])
     lcl_pub = 'tcp://127.0.0.1:333{}'.format(ids[i])
     lcl_rtr = 'tcp://127.0.0.1:444{}'.format(ids[i])
     del ids[i]
     pubs = [ 'tcp://127.0.0.1:333{}'.format(x) for x in ids.values() ]
 
-    snode = simple.SimpleNode( lcl_pub, lcl_pub, lcl_rtr, pubs, 2 )
-    
+    snode = simple.SimpleNode( lcl_rep, lcl_pub, lcl_rtr, pubs, 2 )
+
+    snode.chatty = True
 
         
 reactor.callWhenRunning(doit)
