@@ -7,39 +7,10 @@ from paxos import multi, basic
 from twisted.internet import defer, task, reactor
 
 
-class JSONResponder (object):
-    '''
-    Mixin class providing a simple mechanism for dispatching message handling
-    functions. 
-    '''
-    def _generateResponder(self, prefix):
-        '''
-        Returns a message dispatching function suitable for assignment to a
-        ZmqSocket instance. The message parts must be in JSON format and the
-        first message part must include a "type" field that names the message
-        type (as a string). The returned function will call a member function
-        of the same name with the supplied prefix argument.
-        '''
-        def on_rcv(msg_parts):
-            try:
-                parts = [ json.loads(p) for p in msg_parts ]
-            except ValueError:
-                print 'Invalid JSON: ', msg_parts
-                return
-
-            if not parts or not 'type' in parts[0]:
-                print 'Missing message type', parts
-                return
-
-            fobj = getattr(self, prefix + parts[0]['type'], None)
-        
-            if fobj:
-                fobj(*parts)
-        return on_rcv
 
             
 
-class KeyValueDB (JSONResponder):
+class KeyValueDB (node.JSONResponder):
     '''
     This class implements a distributed key=value database that uses
     Paxos to coordinate database updates. Unlike the replacated state

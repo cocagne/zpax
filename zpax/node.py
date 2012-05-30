@@ -76,8 +76,40 @@ class BasicMultiPaxos(multi.MultiPaxos):
     
 
 
+class JSONResponder (object):
+    '''
+    Mixin class providing a simple mechanism for dispatching message handling
+    functions. 
+    '''
+    def _generateResponder(self, prefix, parts_transform = lambda x : x):
+        '''
+        Returns a message dispatching function suitable for assignment to a
+        ZmqSocket instance. The message parts must be in JSON format and the
+        first message part must include a "type" field that names the message
+        type (as a string). The returned function will call a member function
+        of the same name with the supplied prefix argument.
+        '''
+        def on_rcv(msg_parts):
+            msg_parts = parts_transform(msg_parts)
+            try:
+                parts = [ json.loads(p) for p in msg_parts ]
+            except ValueError:
+                print 'Invalid JSON: ', msg_parts
+                return
 
-class BasicNode (object):
+            if not parts or not 'type' in parts[0]:
+                print 'Missing message type', parts
+                return
+
+            fobj = getattr(self, prefix + parts[0]['type'], None)
+        
+            if fobj:
+                fobj(*parts)
+        return on_rcv
+
+
+
+class BasicNode (JSONResponder):
     '''
     This class provides the basic functionality required for Multi-Paxos
     over ZeroMQ Publish/Subscribe sockets. This class follows the GoF95
@@ -112,9 +144,8 @@ class BasicNode (object):
         self.pub              = tzmq.ZmqPubSocket()
         self.sub              = tzmq.ZmqSubSocket()
 
-        self.sub.subscribe = 'zpax'
-        
-        self.sub.messageReceived    = self._on_sub_received
+        self.sub.subscribe       = 'zpax'        
+        self.sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
         
         self.pub.bind(self.local_ps_addr)
 
@@ -129,22 +160,34 @@ class BasicNode (object):
     #
     def onLeadershipAcquired(self):
         '''
-        Called when this node acquires Paxos leadership
+        Called when this node acquires Paxos leadership.
+
+        Note, this is not reliable as a unique distiction between
+        nodes. Multiple nodes may simultaneously believe themselves to be the
+        leader. Also, it is possible for another leader to have been elected
+        and several proposals resolved before this method is even called. Be
+        wary of using this method for anything beyond starting a timer for
+        sending heartbeats.
         '''
 
     def onLeadershipLost(self):
         '''
-        Called when this node looses Paxos leadership
+        Called when this node looses Paxos leadership.
+
+        See note on onLeadershipAcquired() about the reliability of this method.
         '''
 
     def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
         '''
         Called whenver Paxos leadership changes.
+
+        See note on onLeadershipAcquired() about the reliability of this method.
         '''
 
     def onBehindInSequence(self):
         '''
-        Called when this node's sequence number is behind the current value
+        Called when this node's sequence number is behind the most recently observed
+        value.
         '''
 
     def onOtherNodeBehindInSequence(self, node_uid):
@@ -155,7 +198,7 @@ class BasicNode (object):
 
     def onProposalResolution(self, instance_num, value):
         '''
-        Called when an instance of the Paxos algorithm agrees on a value
+        Called when an instance of the Paxos algorithm agrees on a value.
         '''
 
     def onHeartbeat(self, data):
@@ -218,7 +261,7 @@ class BasicNode (object):
         msg_stack.extend( json.dumps(p) for p in parts )
         
         self.pub.send( msg_stack )
-        self._on_sub_received( msg_stack )
+        self.sub.messageReceived( msg_stack )
 
 
     def shutdown(self):
@@ -231,6 +274,29 @@ class BasicNode (object):
             self.heartbeat_poller.stop()
         if self.heartbeat_pulser.running:
             self.heartbeat_pulser.stop()
+
+
+    def checkSequence(self, header):
+        '''
+        Checks the sequence number of the header. If our sequence number is behind,
+        it calls onBehindInSequence(). If the header's sequence is behind, it calls
+        onOtherNodeBehindInSequence().
+
+        The return value is True if the header's squence number matches our own and
+        False otherwise. If False is returned, the message will be considered invalid
+        and will not be processed. Overloading this method and artificially returning
+        False may be used by subclasses to temporarily disable participation in
+        Paxos messaging.
+        '''
+        seq = header['seq_num']
+        
+        if seq > self.sequence_number:
+            self.onBehindInSequence()
+            
+        elif seq < self.sequence_number:
+            self.onOtherNodeBehindInSequence(header['node_uid'])
+
+        return seq == self.sequence_number
             
     #--------------------------------------------------------------------------
     # Helper Methods
@@ -279,57 +345,23 @@ class BasicNode (object):
     #--------------------------------------------------------------------------
     # Paxos Messaging 
     #
-    def _on_sub_received(self, msg_parts):
-        '''
-        msg_parts - [0] 'zpax'
-                    [1] BasicNode's JSON-encoded message content 
-                    [2] If present, it's a JSON-encoded Paxos message
-        '''
-        try:
-            parts = [ json.loads(p) for p in msg_parts[1:] ]
-        except ValueError:
-            print 'Invalid JSON: ', msg_parts
-            return
-
-        if not 'type' in parts[0]:
-            print 'Missing message type'
-            return
-
-        fobj = getattr(self, '_on_sub_' + parts[0]['type'], None)
-        
-        if fobj:
-            fobj(*parts)
-
-
-    def _check_sequence(self, header):
-        seq = header['seq_num']
-        
-        if seq > self.sequence_number:
-            self.onBehindInSequence()
-            
-        elif seq < self.sequence_number:
-            self.onOtherNodeBehindInSequence(header['node_uid'])
-
-        return seq == self.sequence_number
-
-
-    def _on_sub_paxos_heartbeat(self, header, pax):
+    def _SUB_paxos_heartbeat(self, header, pax):
         self.mpax.node.proposer.recv_heartbeat( tuple(pax[0]) )
         self.onHeartbeat( header )
 
     
-    def _on_sub_paxos_prepare(self, header, pax):
+    def _SUB_paxos_prepare(self, header, pax):
         #print self.node_uid, 'got prepare', header, pax
-        if self._check_sequence(header):
+        if self.checkSequence(header):
             r = self.mpax.recv_prepare(header['seq_num'], tuple(pax[0]))
             if r:
                 #print self.node_uid, 'sending promise'
                 self.publish( 'paxos_promise', {}, r )
 
             
-    def _on_sub_paxos_promise(self, header, pax):
+    def _SUB_paxos_promise(self, header, pax):
         #print self.node_uid, 'got promise', header, pax
-        if self._check_sequence(header):
+        if self.checkSequence(header):
             r = self.mpax.recv_promise(header['seq_num'],
                                        header['node_uid'],
                                        tuple(pax[0]),
@@ -339,9 +371,9 @@ class BasicNode (object):
                 self._paxos_send_accept( *r )
             
 
-    def _on_sub_paxos_accept(self, header, pax):
+    def _SUB_paxos_accept(self, header, pax):
         #print 'Got Accept!', pax
-        if self._check_sequence(header):
+        if self.checkSequence(header):
             r = self.mpax.recv_accept_request(header['seq_num'],
                                               tuple(pax[0]),
                                               pax[1])
@@ -349,9 +381,9 @@ class BasicNode (object):
                 self.publish( 'paxos_accepted', {}, r )
 
 
-    def _on_sub_paxos_accepted(self, header, pax):
+    def _SUB_paxos_accepted(self, header, pax):
         #print 'Got accepted', header, pax
-        if self._check_sequence(header):
+        if self.checkSequence(header):
             self.mpax.recv_accepted(header['seq_num'], header['node_uid'],
                                     tuple(pax[0]), pax[1])
         
@@ -383,7 +415,7 @@ class BasicNode (object):
     #--------------------------------------------------------------------------
     # BasicNode's Pub-Sub Messaging 
     #   
-    def _on_sub_value_proposal(self, header):
+    def _SUB_value_proposal(self, header):
         #print 'Proposal made. Seq = ', self.sequence_number, 'Req: ', header
         if header['seq_num'] == self.sequence_number:
             if self.mpax.node.acceptor.accepted_value is None:
