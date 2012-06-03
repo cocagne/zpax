@@ -32,6 +32,17 @@ class TestKV (simple.SimpleNode):
 
     #chatty=True
 
+    drop_packets = False
+
+    name = None
+
+    def checkSequence(self, header):
+        if self.drop_packets:
+            return False
+        
+        return super(TestKV,self).checkSequence(header)
+        
+
 
 
 class TestReq(tzmq.ZmqReqSocket):
@@ -58,6 +69,7 @@ class SimpleTest(unittest.TestCase):
         self.dleader     = None
         self.dlost       = None
         self.clients     = list()
+        self.seq         = 0
         
 
         
@@ -69,11 +81,11 @@ class SimpleTest(unittest.TestCase):
             self.stop(n)
             
 
-    def start(self,  node_names):
+    def start(self,  node_names, chatty=False):
 
-        def gen_cb(x):
+        def gen_cb(x, func):
             def cb():
-                self._on_leader_acq(x)
+                func(x)
             return cb
         
         for node_name in node_names.split():
@@ -87,9 +99,12 @@ class SimpleTest(unittest.TestCase):
 
             
             
-            n.onLeadershipAcquired = gen_cb(node_name)
-            n.onLeadershipLost     = gen_cb(node_name)
-        
+            n.onLeadershipAcquired = gen_cb(node_name, self._on_leader_acq)
+            n.onLeadershipLost     = gen_cb(node_name, self._on_leader_lost)
+
+            n.name = node_name
+            if chatty:
+                n.chatty = True
             self.nodes[node_name] = n
 
         
@@ -160,6 +175,28 @@ class SimpleTest(unittest.TestCase):
         self.dleader.addCallback( onleader1 )
         return d2
 
+
+    def test_on_leader_change(self):
+        self.dleader = defer.Deferred()
+        self.start('a b')
+
+        d = defer.Deferred()
+
+        def cb(x,y):
+            if not d.called:
+                d.callback(None)
+
+        for n in self.nodes.itervalues():
+            n.onLeadershipChanged = cb
+        
+        def onleader1(tpl):
+            self.stop(tpl[1])
+            self.start('c')
+        self.dleader.addCallback( onleader1 )
+
+        d.addCallback( lambda _: self.assertTrue(True) )
+        return d
+
     
     def test_leader_change_on_failed_node(self):
         self.dleader = defer.Deferred()
@@ -175,8 +212,10 @@ class SimpleTest(unittest.TestCase):
         self.dleader.addCallback( onleader1 )
         return d2
 
+    
     def test_leader_resolve(self):
         self.dleader = defer.Deferred()
+        
         self.start('a b c')
 
         d = defer.Deferred()
@@ -184,13 +223,13 @@ class SimpleTest(unittest.TestCase):
         def on_resolve(instance_num, value):
             self.assertEquals( value, 'foo' )
             d.callback(None)
+            self.seq += 1
             
-        
         def on_leader(tpl):
             self.nodes[tpl[1]].onProposalResolution = on_resolve
+            self.nodes[tpl[1]].chatty = True
             c = self.new_client(tpl[1])
-            c.send( json.dumps( dict(type='propose_value', sequence_number=0, value='foo') ) )
-            
+            c.send( json.dumps( dict(type='propose_value', sequence_number=self.seq, value='foo') ) )
         
         self.dleader.addCallback( on_leader )
         return d
@@ -205,7 +244,7 @@ class SimpleTest(unittest.TestCase):
         def on_resolve(instance_num, value):
             self.assertEquals( value, 'foo' )
             d.callback(None)
-            
+            self.seq += 1
         
         def on_leader(tpl):
             s = set( self.nodes.keys() )
@@ -213,10 +252,63 @@ class SimpleTest(unittest.TestCase):
             x = s.pop()
             self.nodes[x].onProposalResolution = on_resolve
             c = self.new_client(x)
-            c.send( json.dumps( dict(type='propose_value', sequence_number=0, value='foo') ) )
-            
+            c.send( json.dumps( dict(type='propose_value', sequence_number=self.seq, value='foo') ) )
         
         self.dleader.addCallback( on_leader )
         return d
 
+    def _start_distinct(self, chatty=False):
+        self.dleader = defer.Deferred()
+        
+        self.start('a b c', chatty)
+
+        def on_leader(tpl):
+            leader = self.nodes[tpl[1]]
+            s = set( self.nodes.keys() )
+            s.remove(tpl[1])
+            return leader, [ self.nodes[k] for k in s ]
+        
+        self.dleader.addCallback( on_leader )
+        return self.dleader
+
+    
+    def _resolve(self, leader):
+        print 'RBEGIN ', self.seq
+        d = defer.Deferred()
+
+        def on_resolve(instance_num, value):
+            print 'RESOLVED ', self.seq
+            self.seq += 1
+            d.callback(None)
+
+        leader.onProposalResolution = on_resolve
+        x = self.new_client(leader.name)
+        x.send( json.dumps( dict(type='propose_value',
+                                 sequence_number=self.seq,
+                                 value='foo') ) )
+        return d
+        
+
+    @defer.inlineCallbacks
+    def test_behind_in_sequence(self):
+        d = defer.Deferred()
+        
+        leader, others = yield self._start_distinct(True)
+        print 'Leader ', leader.name
+        leader.chatty = True
+
+        n = others[0]
+        
+        print '1', self.seq
+        n.drop_packets       = True
+        n.onBehindInSequence = lambda : d.callback(None)
+
+        yield self._resolve(leader)
+
+        print '2', self.seq
+        n.drop_packets = False
+
+        self._resolve()
+        
+        yield d
         

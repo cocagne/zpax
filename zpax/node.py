@@ -429,12 +429,13 @@ class BasicNode (JSONResponder):
         if self.checkSequence(header):
             r = self.mpax.recv_prepare(header['seq_num'], tuple(pax[0]))
             if r:
-                #print self.node_uid, 'sending promise'
+                print 'SND(%s)' % self.node_uid, r[0]
                 self.publish( 'paxos_promise', {}, r )
 
             
     def _SUB_paxos_promise(self, header, pax):
         #print self.node_uid, 'got promise', header, pax
+        print 'RCV(%s)' % self.node_uid, header['node_uid'], pax[0]
         if self.checkSequence(header):
             r = self.mpax.recv_promise(header['seq_num'],
                                        header['node_uid'],
@@ -446,13 +447,16 @@ class BasicNode (JSONResponder):
             
 
     def _SUB_paxos_accept(self, header, pax):
-        #print 'Got Accept!', pax
+        print 'Got Accept(%s)!' % self.node_uid, header['node_uid'], pax[0]
         if self.checkSequence(header):
             r = self.mpax.recv_accept_request(header['seq_num'],
                                               tuple(pax[0]),
                                               pax[1])
             if r:
+                print 'ACCEPTED'
                 self.publish( 'paxos_accepted', {}, r )
+            else:
+                print 'DENIED'
 
 
     def _SUB_paxos_accepted(self, header, pax):
@@ -471,7 +475,7 @@ class BasicNode (JSONResponder):
         if self.mpax.have_leadership() and (
             self.accept_retry is None or not self.accept_retry.active()
             ):
-            #print 'Sending accept'
+            print 'Sending accept', self.node_uid, self.mpax.have_leadership()
             self.publish( 'paxos_accept', {}, [proposal_id, proposal_value] )
 
             retry_delay = self.mpax.node.proposer.hb_period
