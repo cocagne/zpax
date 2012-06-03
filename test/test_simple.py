@@ -299,16 +299,27 @@ class SimpleTest(unittest.TestCase):
 
         n = others[0]
         
-        print '1', self.seq
+        print '*** Disabling:', self.seq, n.name
         n.drop_packets       = True
         n.onBehindInSequence = lambda : d.callback(None)
 
+        def cb():
+            print '******** BEHIND IN SEQUENCE ***********'
+            d.callback(None)
+
+        n.onBehindInSequence = cb
+
         yield self._resolve(leader)
 
-        print '2', self.seq
+        # Flush pending messages
+        ddelay = defer.Deferred()
+        reactor.callLater(0.01, lambda : ddelay.callback(None))
+        yield ddelay
+
+        print '***2***', self.seq, n.sequence_number
         n.drop_packets = False
 
-        self._resolve()
+        self._resolve(leader)
         
         yield d
         

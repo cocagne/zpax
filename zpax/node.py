@@ -1,4 +1,5 @@
 import json
+import random
 
 from zpax import tzmq
 
@@ -143,6 +144,7 @@ class BasicNode (JSONResponder):
         self.quorum_size      = quorum_size
         self.sequence_number  = sequence_number
         self.accept_retry     = None
+        self.delayed_prepare  = None
 
         self.current_proposal = None
         self.proposal_retry   = None
@@ -208,12 +210,6 @@ class BasicNode (JSONResponder):
         '''
         Called when this node's sequence number is behind the most recently observed
         value.
-        '''
-
-    def onOtherNodeBehindInSequence(self, node_uid):
-        '''
-        Called when a request from another node on the network is using an out-of-date
-        sequence number
         '''
 
     def onProposalResolution(self, instance_num, value):
@@ -290,6 +286,8 @@ class BasicNode (JSONResponder):
         self._cancel_proposal()
         if self.accept_retry is not None and self.accept_retry.active():
             self.accept_retry.cancel()
+        if self.delayed_prepare is not None and self.delayed_prepare.active():
+            self.delayed_prepare.cancel()
         self.pax_rep.close()
         self.pax_rep = None
         if self.pax_req is not None:
@@ -317,11 +315,9 @@ class BasicNode (JSONResponder):
         seq = header['seq_num']
         
         if seq > self.sequence_number:
+            print '%%%%%%%%%%%% BEHIND', self.node_uid, seq, self.sequence_number
             self.onBehindInSequence()
             
-        elif seq < self.sequence_number:
-            self.onOtherNodeBehindInSequence(header['node_uid'])
-
         return seq == self.sequence_number
             
     #--------------------------------------------------------------------------
@@ -388,7 +384,7 @@ class BasicNode (JSONResponder):
 
         
     def _paxos_on_leadership_lost(self):
-        if self.accept_retry is not None:
+        if self.accept_retry and self.accept_retry.active():
             self.accept_retry.cancel()
             self.accept_retry = None
             
@@ -429,13 +425,15 @@ class BasicNode (JSONResponder):
         if self.checkSequence(header):
             r = self.mpax.recv_prepare(header['seq_num'], tuple(pax[0]))
             if r:
-                print 'SND(%s)' % self.node_uid, r[0]
+                print 'SND %s:  ' % self.node_uid[-5], (r[0][0], str(r[0][1][-5]))
+                #print 'SND %s:  ' % self.node_uid, r[0]
                 self.publish( 'paxos_promise', {}, r )
 
             
     def _SUB_paxos_promise(self, header, pax):
         #print self.node_uid, 'got promise', header, pax
-        print 'RCV(%s)' % self.node_uid, header['node_uid'], pax[0]
+        print 'RCV %s:' % self.node_uid[-5], header['node_uid'][-5], (pax[0][0], str(pax[0][1][-5]))
+        #print 'RCV %s:' % self.node_uid, header['node_uid'], pax[0]
         if self.checkSequence(header):
             r = self.mpax.recv_promise(header['seq_num'],
                                        header['node_uid'],
@@ -447,7 +445,7 @@ class BasicNode (JSONResponder):
             
 
     def _SUB_paxos_accept(self, header, pax):
-        print 'Got Accept(%s)!' % self.node_uid, header['node_uid'], pax[0]
+        print 'Got Accept(%s)!' % self.node_uid[-5], (self.sequence_number, header['seq_num']), header['node_uid'][-5], pax[0],
         if self.checkSequence(header):
             r = self.mpax.recv_accept_request(header['seq_num'],
                                               tuple(pax[0]),
@@ -456,7 +454,11 @@ class BasicNode (JSONResponder):
                 print 'ACCEPTED'
                 self.publish( 'paxos_accepted', {}, r )
             else:
+                self.publish( 'paxos_accepted_nack', dict( proposal_id = tuple(pax[0]),
+                                                           new_proposal_id = self.mpax.node.acceptor.promised_id) )
                 print 'DENIED'
+        else:
+            print '** IGNORED **'
 
 
     def _SUB_paxos_accepted(self, header, pax):
@@ -464,11 +466,29 @@ class BasicNode (JSONResponder):
         if self.checkSequence(header):
             self.mpax.recv_accepted(header['seq_num'], header['node_uid'],
                                     tuple(pax[0]), pax[1])
+
+
+    def _SUB_paxos_accepted_nack(self, header):
+        if self.checkSequence(header):
+            self.mpax.node.proposer.recv_accept_nack( header['node_uid'],
+                                                      tuple(header['proposal_id']),
+                                                      tuple(header['new_proposal_id']) )
         
 
     def _paxos_send_prepare(self, proposal_id):
         #print self.node_uid, 'sending prepare: ', proposal_id
-        self.publish( 'paxos_prepare', {}, [proposal_id,] )
+        
+        # Add a random delay before sending this message and recheck to see if a
+        # leader is active. This should reduce battles for supremacy.
+        def recheck_send():
+            if not self.mpax.node.proposer.leader_is_alive():
+                print '### SENDING PREP ###'
+                self.publish( 'paxos_prepare', {}, [proposal_id,] )
+
+        w = self.mpax.node.proposer.liveness_window
+        w = w - (w * 0.1)
+        self.delayed_prepare = reactor.callLater( random.random() * w,
+                                                  recheck_send )
 
         
     def _paxos_send_accept(self, proposal_id, proposal_value):

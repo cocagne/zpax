@@ -64,10 +64,6 @@ class SimpleNode (node.BasicNode):
         self.publish( 'get_value' )
 
         
-    def onOtherNodeBehindInSequence(self, node_uid):
-        self.publish_value()
-
-
     def onProposalResolution(self, instance_num, value):
         if self.chatty:
             print '*** Resolution! ', instance_num, repr(value)
