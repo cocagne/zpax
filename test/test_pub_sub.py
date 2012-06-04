@@ -80,21 +80,19 @@ class SimpleTest(unittest.TestCase):
     def test_connectivity(self):
         a, b, c = self.start('a b c')
 
+        all_set = set('a b c'.split())
+
         def setup(s):
             s.d = defer.Deferred()
             s.r = set()
             
-            needed = set('a b c'.split())
-            needed.remove(s.name)
-            
-            def check():
-                if s.r == needed:
-                    print 'DONE: ', s.name
-                    s.d.callback(None)
-
             def jrecv(parts):
+                print 'Recv', s.name, parts[0]['name'], '    ', s.r
                 s.r.add( parts[0]['name'] )
-                check()
+                if s.r == all_set:
+                    print 'DONE: ', s.name
+                    if not s.d.called:
+                        s.d.callback(None)
 
             s.jrecv = jrecv
 
@@ -119,3 +117,21 @@ class SimpleTest(unittest.TestCase):
         d.addCallback(done)
         
         return d
+
+    def test_c1(self):
+        return self.test_connectivity()
+
+    def test_c2(self):
+        return self.test_connectivity()
+
+    def test_c3(self):
+        return self.test_connectivity()
+
+    def test_c4(self):
+        return self.test_connectivity()
+
+    def test_c5(self):
+        return self.test_connectivity()
+
+    def test_c6(self):
+        return self.test_connectivity()
