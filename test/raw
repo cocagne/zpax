@@ -1,0 +1,115 @@
+#!/usr/bin/python
+
+import sys
+import os.path
+import json
+import select
+import time
+
+import zmq
+from zmq.core import constants, error
+
+ctx = zmq.Context()
+
+
+class PS (object):
+
+    def __init__(self, name, pub_addr, sub_addrs):
+        self.name = name
+        self.pub  = ctx.socket(zmq.PUB)
+        self.sub  = ctx.socket(zmq.SUB)
+
+        self.pub.bind( pub_addr )
+        for a in sub_addrs:
+            self.sub.connect(a)
+
+        self.sub.setsockopt(zmq.SUBSCRIBE, 'test_zmq')
+
+        self.sub_fd = self.sub.getsockopt(constants.FD)
+        self.pub_fd = self.pub.getsockopt(constants.FD)
+
+    def close(self):
+        self.pub.close()
+        self.sub.close()
+
+    def on_recv(self):
+        try:
+            self.pub.recv_multipart( constants.NOBLOCK )
+        except:
+            pass
+        
+        while True:
+            try:
+                parts = self.sub.recv_multipart( constants.NOBLOCK )
+                self.jrecv( [ json.loads(p) for p in parts[1:] ] )
+            except error.ZMQError as e:
+                if e.errno == constants.EAGAIN:
+                    print 'Emptied: ', self.name
+                    break
+                raise e
+
+
+    def jsend(self, **kwargs):
+        print 'SND({0})'.format(self.name), kwargs
+        kwargs.update( dict(name=self.name) )
+        self.pub.send_multipart( ['test_zmq', json.dumps(kwargs) ] )
+        self.on_recv()
+
+    def jrecv(self, jparts):
+        print 'RCV({0})'.format(self.name), jparts
+
+    def time(self):
+        self.jsend()
+
+
+class MiniReactor (object):
+
+    def __init__(self, ps_objs):
+        self.pso = ps_objs
+        self.r   = [ ps.sub_fd for ps in ps_objs ]
+
+        self.r.extend( [ ps.pub_fd for ps in ps_objs ] )
+
+        
+        self.fd_map = dict()
+        for ps in ps_objs:
+            self.fd_map[ ps.sub_fd ] = ps
+            self.fd_map[ ps.pub_fd ] = ps
+
+    def run(self):
+        while True:
+            r,w,x = select.select(self.r, [], [], 0.1)
+            print 'Loop!', r, w, x
+            if not r and not w and not x:
+                print '--- Timeout ---', time.time()
+                for ps in self.pso:
+                    ps.time()
+
+            for fd in r:
+                self.fd_map[ fd ].on_recv()
+
+                
+
+def test():
+    snames  = 'a b c'
+    sockets = dict()
+    l       = list()
+    pubs    = [ 'ipc:///tmp/tzmq_{0}_pub'.format(n) for n in snames.split() ]
+        
+    for sname in snames.split():
+        s = PS(sname, 'ipc:///tmp/tzmq_{0}_pub'.format(sname), pubs)
+        sockets[sname] = s
+        l.append(s)
+
+    r = MiniReactor(l)
+
+    r.run()
+
+
+test()
+
+    
+
+    
+
+

@@ -155,6 +155,16 @@ class ZmqSocket(object):
         return "Zmq%sSocket(%s)" % (t, repr(self._zsock))
 
 
+    def logPrefix(self):
+        """
+        Part of L{ILoggingContext}.
+
+        @return: Prefix used during log formatting to indicate context.
+        @rtype: C{str}
+        """
+        return 'ZMQ'
+
+
     def fileno(self):
         """
         Part of L{IFileDescriptor}.
@@ -191,49 +201,28 @@ class ZmqSocket(object):
 
         Part of L{IReadDescriptor}.
         """
+        if self._ctx is None:  # disconnected
+                return
 
-        events = self._zsock.getsockopt(constants.EVENTS)
-
-        #print 'doRead()', events
-        
-        while self._queue and (events & constants.POLLOUT) == constants.POLLOUT:
+        while self._queue and self._zsock is not None:
             try:
                 self._zsock.send_multipart( self._queue[0], constants.NOBLOCK )
                 self._queue.popleft()
-                events = self._zsock.getsockopt(constants.EVENTS)
             except error.ZMQError as e:
                 if e.errno == constants.EAGAIN:
                     break
-                self._queue.popleft() # Failed to send, discard message
                 raise e
         
-        while (events & constants.POLLIN) == constants.POLLIN:
-            if self._ctx is None:  # disconnected
-                return
-            
+        while self._zsock is not None:
             try:
                 msg_list = self._zsock.recv_multipart( constants.NOBLOCK )
+                log.callWithLogger(self, self.messageReceived, msg_list)
             except error.ZMQError as e:
                 if e.errno == constants.EAGAIN:
                     break
                 raise e
 
-            log.callWithLogger(self, self.messageReceived, msg_list)
-
-            # Callback can cause the socket to be closed
-            if self._zsock is not None:
-                events = self._zsock.getsockopt(constants.EVENTS)
-
-                
-    def logPrefix(self):
-        """
-        Part of L{ILoggingContext}.
-
-        @return: Prefix used during log formatting to indicate context.
-        @rtype: C{str}
-        """
-        return 'ZMQ'
-
+            
     
     def send(self, *message_parts):
         """
@@ -241,19 +230,10 @@ class ZmqSocket(object):
         """
         if len(message_parts) == 1 and isinstance(message_parts[0], (list, tuple)):
             message_parts = message_parts[0]
-            
-        if self._zsock.getsockopt(constants.EVENTS) & constants.POLLOUT == constants.POLLOUT:
-            self._zsock.send_multipart( message_parts, constants.NOBLOCK )
-        else:
-            self._queue.append( message_parts )
 
-        # The following call is requried to ensure that the socket's file descriptor
-        # will signal new data as being available.
-        self._zsock.getsockopt(constants.EVENTS)
-        
-        # 
-        #if self._zsock.getsockopt(constants.EVENTS) & POLL_IN_OUT:
-        #    self.doRead()
+        self._queue.append( message_parts )
+            
+        self.doRead()
 
 
     def connect(self, addr):

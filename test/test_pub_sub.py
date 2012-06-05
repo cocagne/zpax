@@ -87,7 +87,7 @@ class SimpleTest(unittest.TestCase):
             s.r = set()
             
             def jrecv(parts):
-                print 'Recv', s.name, parts[0]['name'], '    ', s.r
+                print 'Recv', s.name, parts[0]['name'], '    ', s.r, s.sub.fd
                 s.r.add( parts[0]['name'] )
                 if s.r == all_set:
                     print 'DONE: ', s.name
