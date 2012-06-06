@@ -18,6 +18,11 @@ from zpax import simple, node, tzmq
 from twisted.internet import reactor, defer
 from twisted.trial import unittest
 
+def delay(t):
+    d = defer.Deferred()
+    reactor.callLater(t, lambda : d.callback(None) )
+    return d
+
 
 class TestHBP (node.BasicHeartbeatProposer):
     hb_period       = 0.1
@@ -79,6 +84,11 @@ class SimpleTest(unittest.TestCase):
             
         for n in all_nodes:
             self.stop(n)
+
+        # In ZeroMQ 2.1.11 there is a race condition for socket deletion
+        # and recreation that can render sockets unusable. We insert
+        # a short delay here to prevent the condition from occuring.
+        return delay(0.05)
             
 
     def start(self,  node_names, chatty=False):

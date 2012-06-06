@@ -400,14 +400,15 @@ class BasicNode (JSONResponder):
         
         if self.pax_req is not None:
             self.pax_req.close()
-            
-        self.pax_req = tzmq.ZmqReqSocket()
 
-        self.pax_req.messageReceived = self._generateResponder('_REQ_')
+        if new_leader_uid is not None:
+            self.pax_req = tzmq.ZmqReqSocket()
+
+            self.pax_req.messageReceived = self._generateResponder('_REQ_')
         
-        self.pax_req.connect( new_leader_uid )
+            self.pax_req.connect( new_leader_uid )
 
-        self._try_propose()
+            self._try_propose()
         
         self.onLeadershipChanged(prev_leader_uid, new_leader_uid)
 

@@ -220,6 +220,11 @@ class ZmqSocket(object):
             except error.ZMQError as e:
                 if e.errno == constants.EAGAIN:
                     break
+                
+                # This exception can be thrown during socket closing process
+                if e.errno == 156384763 or str(e) == 'Operation cannot be accomplished in current state':
+                    break
+                
                 raise e
 
             
