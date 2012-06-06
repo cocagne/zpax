@@ -19,7 +19,8 @@ class PS (object):
         self.pub  = ctx.socket(zmq.PUB)
         self.sub  = ctx.socket(zmq.SUB)
 
-        self.pub.bind( pub_addr )
+        print 'BIND RESULT: ', self.pub.bind( pub_addr )
+        
         for a in sub_addrs:
             self.sub.connect(a)
 
@@ -43,26 +44,18 @@ class PS (object):
         while True:
             try:
                 parts = self.sub.recv_multipart( constants.NOBLOCK )
-                self.jrecv( [ json.loads(p) for p in parts[1:] ] )
+                self.a.add(parts[1])
+                print 'RCV({0})'.format(self.name), 'from=', parts[1], 'all = ', self.a
             except error.ZMQError as e:
                 if e.errno == constants.EAGAIN:
                     break
                 raise e
 
-
-    def jsend(self, **kwargs):
-        print 'SND({0})'.format(self.name), kwargs
-        kwargs.update( dict(name=self.name) )
-        self.pub.send_multipart( ['test_zmq', json.dumps(kwargs) ] )
+    def send(self):
+        print 'SND({0})'.format(self.name)
+        self.pub.send_multipart( ['test_zmq', self.name ] )
         self.on_recv()
-
-    def jrecv(self, jparts):
-        print 'RCV({0})'.format(self.name), jparts, 'all = ', self.a
-        if 'name' in jparts[0]:
-            self.a.add( jparts[0]['name'] )
-
-    def time(self):
-        self.jsend()
+        
 
 
 class MiniReactor (object):
@@ -71,38 +64,35 @@ class MiniReactor (object):
         self.pso = ps_objs
         self.r   = [ ps.sub_fd for ps in ps_objs ]
 
-        self.r.extend( [ ps.pub_fd for ps in ps_objs ] )
-
-        
+        #self.r.extend( [ ps.pub_fd for ps in ps_objs ] )
         self.fd_map = dict()
         for ps in ps_objs:
             self.fd_map[ ps.sub_fd ] = ps
-            self.fd_map[ ps.pub_fd ] = ps
+            #self.fd_map[ ps.pub_fd ] = ps
 
         self.count = 0
 
     def run(self):
         while True:
-            r,w,x = select.select(self.r, [], [], 0.1)
             self.count += 1
-            print 'Loop({0})'.format(self.count), r, w, x
+            
+            print '--- Loop({0}) ---'.format(self.count)
+            
+            r,w,x = select.select(self.r, [], [], 0.1)
+            
             if not r and not w and not x:
-                print '--- Timeout ---', time.time()
                 for ps in self.pso:
-                    ps.time()
+                    ps.send()
 
             for fd in r:
                 self.fd_map[ fd ].on_recv()
 
-            a = set(['a','b','c'])
             done = True
             for ps in self.pso:
-                if ps.a != a:
+                if ps.a != set(['a','b','c']):
                     done = False
                     
-            #if self.count == 15:
             if done:
-                print '**************** Done ({0}) **************'.format(self.count)
                 for p in self.pso:
                     p.close()
                 return
@@ -128,9 +118,10 @@ def test():
 count = 0
 while True:
     count += 1
-    print '######### ', count
+    print '\n#########', count, '#########\n'
     test()
-    time.sleep(1)
+    if len(sys.argv) > 1:
+        time.sleep(0.05)
     
 
     

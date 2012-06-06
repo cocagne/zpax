@@ -19,6 +19,11 @@ from twisted.internet import reactor, defer
 from twisted.trial import unittest
 
 
+def delay(tsec):
+    d = defer.Deferred()
+    reactor.callLater(tsec, lambda : d.callback(None))
+    return d
+
         
 class PS (object):
 
@@ -59,6 +64,8 @@ class SimpleTest(unittest.TestCase):
     def tearDown(self):
         for s in self.sockets.itervalues():
             s.close()
+
+        return delay(0.05)
             
 
     def start(self, snames):
@@ -118,20 +125,5 @@ class SimpleTest(unittest.TestCase):
         
         return d
 
-    def test_c1(self):
-        return self.test_connectivity()
 
-    def test_c2(self):
-        return self.test_connectivity()
-
-    def test_c3(self):
-        return self.test_connectivity()
-
-    def test_c4(self):
-        return self.test_connectivity()
-
-    def test_c5(self):
-        return self.test_connectivity()
-
-    def test_c6(self):
-        return self.test_connectivity()
+    
