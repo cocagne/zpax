@@ -237,7 +237,7 @@ class SimpleTest(unittest.TestCase):
             
         def on_leader(tpl):
             self.nodes[tpl[1]].onProposalResolution = on_resolve
-            self.nodes[tpl[1]].chatty = True
+            #self.nodes[tpl[1]].chatty = True
             c = self.new_client(tpl[1])
             c.send( json.dumps( dict(type='propose_value', sequence_number=self.seq, value='foo') ) )
         
@@ -283,11 +283,11 @@ class SimpleTest(unittest.TestCase):
 
     
     def _resolve(self, leader):
-        print 'RBEGIN ', self.seq
+        #print 'RBEGIN ', self.seq
         d = defer.Deferred()
 
         def on_resolve(instance_num, value):
-            print 'RESOLVED ', self.seq
+            #print 'RESOLVED ', self.seq
             self.seq += 1
             d.callback(None)
 
@@ -303,18 +303,18 @@ class SimpleTest(unittest.TestCase):
     def test_behind_in_sequence(self):
         d = defer.Deferred()
         
-        leader, others = yield self._start_distinct(True)
-        print 'Leader ', leader.name
-        leader.chatty = True
+        leader, others = yield self._start_distinct(False)
+        #print 'Leader ', leader.name
+        #leader.chatty = True
 
         n = others[0]
         
-        print '*** Disabling:', self.seq, n.name
+        #print '*** Disabling:', self.seq, n.name
         n.drop_packets       = True
         n.onBehindInSequence = lambda : d.callback(None)
 
         def cb():
-            print '******** BEHIND IN SEQUENCE ***********'
+            #print '******** BEHIND IN SEQUENCE ***********'
             d.callback(None)
 
         n.onBehindInSequence = cb
@@ -326,7 +326,7 @@ class SimpleTest(unittest.TestCase):
         reactor.callLater(0.01, lambda : ddelay.callback(None))
         yield ddelay
 
-        print '***2***', self.seq, n.sequence_number
+        #print '***2***', self.seq, n.sequence_number
         n.drop_packets = False
 
         self._resolve(leader)
