@@ -1,0 +1,19 @@
+
+* Add durability support to node.py
+   * need to be able to fetch state from subclass
+
+* HMAC auth of PUB & REQ packets
+
+* Value encryption of PUB & REQ
+
+* Zpax Config
+   - Just part of keyval for now w/ special key name
+
+----------------
+Durability
+  basic.Node -- add pickle meth to ignore teh callback
+    * multi.MultiPaxos manually resets it (via method) on deserial
+  |-> Should scale to custom nodes that use custom MultiPaxos classes
+      on load, they can fix up any markers left by their known subclasses.
+
+  Put durability into MultiPaxos class then.

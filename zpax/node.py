@@ -149,6 +149,14 @@ class BasicNode (JSONResponder):
         self.current_proposal = None
         self.proposal_retry   = None
 
+        # Remove quorum and seq num from constructor args, pull
+        # from mpax if it's initialized.
+        #
+        # if not initialized, require initialize function and do not
+        # start heartbeat poller.
+        #
+        # Add durable state capture & recover as function of subclass
+        #
         self.mpax             = BasicMultiPaxos(self.node_uid,
                                                 quorum_size,
                                                 sequence_number,
