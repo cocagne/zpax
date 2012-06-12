@@ -62,15 +62,14 @@ class BasicHeartbeatProposer (heartbeat.Proposer):
 
 class BasicMultiPaxos(multi.MultiPaxos):
 
-    def __init__(self, node_uid, quorum_size, sequence_number, node_factory,
-                 on_resolution_callback):
+    node_factory     = None
+    on_resolution_cb = None
 
-        self.node_factory     = node_factory
-        self.on_resolution_cb = on_resolution_callback
-        
-        super(BasicMultiPaxos, self).__init__( node_uid,
-                                                quorum_size,
-                                                sequence_number )
+    def __getstate__(self):
+        d = dict( self.__dict__ )
+        del d['node_factory']
+        del d['on_resolution_cb']
+        return d
                 
     def on_proposal_resolution(self, instance_num, value):
         self.on_resolution_cb(instance_num, value)
@@ -134,37 +133,20 @@ class BasicNode (JSONResponder):
                  local_rep_addr,
                  local_pub_sub_addr,
                  remote_pub_sub_addrs,
-                 quorum_size,
-                 sequence_number=0):
+                 durable_dir=None,
+                 object_id=None):
 
         self.node_uid         = local_rep_addr
         self.local_rep_addr   = local_rep_addr
         self.local_ps_addr    = local_pub_sub_addr
         self.remote_ps_addrs  = remote_pub_sub_addrs
-        self.quorum_size      = quorum_size
-        self.sequence_number  = sequence_number
+        self.quorum_size      = None
+        self.sequence_number  = None
         self.accept_retry     = None
         self.delayed_prepare  = None
 
         self.current_proposal = None
         self.proposal_retry   = None
-
-        # Remove quorum and seq num from constructor args, pull
-        # from mpax if it's initialized.
-        #
-        # if not initialized, require initialize function and do not
-        # start heartbeat poller.
-        #
-        # Add durable state capture & recover as function of subclass
-        #
-        self.mpax             = BasicMultiPaxos(self.node_uid,
-                                                quorum_size,
-                                                sequence_number,
-                                                self._node_factory,
-                                                self._on_proposal_resolution)
-        
-        self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
-        self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
 
         self.pax_rep          = tzmq.ZmqRepSocket()
         self.pax_req          = None                # Assigned on leadership change
@@ -182,7 +164,30 @@ class BasicNode (JSONResponder):
         for x in remote_pub_sub_addrs:
             self.pax_sub.connect(x)
 
+        self.mpax                  = BasicMultiPaxos(durable_dir, object_id)
+        self.mpax.node_factory     = self._node_factory
+        self.mpax.on_resolution_cb = self._on_proposal_resolution
+
+        self.quorum_size      = self.mpax.quorum_size
+        self.sequence_number  = self.mpax.instance_num
+        
+        self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
+        self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
+
+        if self.mpax.quorum_size is not None:
+            self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
+
+
+    def initialize(self, quorum_size):
+        assert self.mpax.quorum_size is None, 'MultiPaxos instance already initialized'
+        
+        self.mpax.initialize( self.node_uid, quorum_size )
+
+        self.quorum_size     = self.mpax.quorum_size
+        self.sequence_number = self.mpax.instance_num
+        
         self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
+
 
     
     #--------------------------------------------------------------------------

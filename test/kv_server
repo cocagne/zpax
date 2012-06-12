@@ -24,14 +24,19 @@ def doit():
     global snode
     
     i = sys.argv[1]
-    lcl_pub = 'tcp://127.0.0.1:333{}'.format(ids[i])
-    lcl_rep = 'tcp://127.0.0.1:444{}'.format(ids[i])
+    lcl_pax_rep = 'tcp://127.0.0.1:222{}'.format(ids[i])
+    lcl_pax_pub = 'tcp://127.0.0.1:333{}'.format(ids[i])
+    lcl_rep     = 'tcp://127.0.0.1:444{}'.format(ids[i])
     del ids[i]
-    pubs = [ 'tcp://127.0.0.1:333{}'.format(x) for x in ids.values() ]
-    reps = [ 'tcp://127.0.0.1:444{}'.format(x) for x in ids.values() ]
+    pax_pubs = [ 'tcp://127.0.0.1:333{}'.format(x) for x in ids.values() ]
+    reps     = [ 'tcp://127.0.0.1:444{}'.format(x) for x in ids.values() ]
 
-    snode = keyval.KeyValueDB( lcl_pub, lcl_pub, lcl_rep,
-                               pubs, reps, 2, '/tmp', ':memory:' )
+    snode = keyval.KeyValueDB( lcl_pax_pub,
+                               lcl_pax_rep, lcl_pax_pub, pax_pubs,
+                               lcl_rep, reps,
+                               '/tmp', ':memory:' )
+
+    snode.initialize(2)
     
 
         

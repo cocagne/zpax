@@ -105,9 +105,9 @@ class SimpleTest(unittest.TestCase):
                         'ipc:///tmp/ts_{}_pub'.format(node_name),
                         'ipc:///tmp/ts_{}_rtr'.format(node_name),
                         ['ipc:///tmp/ts_{}_pub'.format(n) for n in all_nodes],
-                        self.quorum_size )
+                      )
 
-            
+            n.initialize(self.quorum_size)
             
             n.onLeadershipAcquired = gen_cb(node_name, self._on_leader_acq)
             n.onLeadershipLost     = gen_cb(node_name, self._on_leader_lost)

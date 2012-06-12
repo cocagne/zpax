@@ -20,14 +20,15 @@ class SimpleNode (node.BasicNode):
     def __init__(self, node_uid,
                  local_pub_sub_addr,   local_rtr_addr,
                  remote_pub_sub_addrs,
-                 quorum_size,
-                 initial_value='', sequence_number=0):
+                 initial_value='',
+                 durable_dir=None,
+                 object_id=None):
 
         super(SimpleNode,self).__init__( node_uid,
                                          local_pub_sub_addr,
                                          remote_pub_sub_addrs,
-                                         quorum_size,
-                                         sequence_number )
+                                         durable_dir,
+                                         object_id )
 
         self.local_rtr_addr   = local_rtr_addr
         self.value            = initial_value
@@ -39,6 +40,7 @@ class SimpleNode (node.BasicNode):
         self.router.messageReceived = self._on_router_received
         
         self.router.bind(self.local_rtr_addr)
+
 
         
     def onShutdown(self):

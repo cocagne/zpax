@@ -25,30 +25,39 @@ class KeyValueDB (node.JSONResponder):
     with it's peers and will begin participating in Paxos instance resolutions.
     '''
     def __init__(self, node_uid,
-                 local_pub_sub_addr,
+                 local_paxos_rep_addr,
+                 local_paxos_pub_sub_addr,
+                 remote_paxos_pub_sub_addrs,
                  local_rep_addr,
-                 remote_pub_sub_addrs,
                  remote_rep_addrs,
-                 quorum_size,
                  database_dir,
                  database_filename=None,
                  catchup_retry_delay=2.0,
                  catchup_num_items=2):
 
         seq_num = 0 # XXX Integrate Durable Objects into Basic Node
+
+        if database_filename is None:
+            database_filename = os.path.join(database_dir, 'db.sqlite')
+
+        if database_filename == ':memory:':
+            durable_dir = None
+            durable_id  = None
+        else:
+            durable_dir = database_dir
+            durable_id  = os.path.basename(database_filename + '.paxos')
+            
         
         self.kv_node = KeyValNode(self,
-                                  node_uid,
-                                  local_pub_sub_addr,
-                                  remote_pub_sub_addrs,
-                                  quorum_size,
-                                  seq_num)
+                                  local_paxos_rep_addr,
+                                  local_paxos_pub_sub_addr,
+                                  remote_paxos_pub_sub_addrs,
+                                  durable_dir,
+                                  durable_id)
 
         self.catchup_retry_delay = catchup_retry_delay
         self.catchup_num_items   = catchup_num_items
 
-        if database_filename is None:
-            database_filename = os.path.join(database_dir, 'db.sqlite')
             
         self.db            = db.DB( database_filename )
         self.db_seq        = self.db.get_last_resolution()
@@ -67,6 +76,10 @@ class KeyValueDB (node.JSONResponder):
 
         for x in remote_rep_addrs:
             self.req.connect(x)
+
+
+    def initialize(self, quorum_size):
+        self.kv_node.initialize(quorum_size)
 
 
     def shutdown(self):
@@ -185,19 +198,20 @@ class KeyValNode (node.BasicNode):
     prior to the completion of the catchup process. 
     '''
 
-    def __init__(self, kvdb,
-                 node_uid,
+    def __init__(self,
+                 kvdb,
+                 local_rep_addr,
                  local_pub_sub_addr,
                  remote_pub_sub_addrs,
-                 quorum_size,
-                 seq_num):
+                 durable_dir,
+                 object_id):
 
-        super(KeyValNode,self).__init__( node_uid,
+        super(KeyValNode,self).__init__( local_rep_addr,
                                          local_pub_sub_addr,
                                          remote_pub_sub_addrs,
-                                         quorum_size,
-                                         seq_num )
-
+                                         durable_dir,
+                                         object_id)
+        
         self.kvdb = kvdb
 
         

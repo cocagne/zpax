@@ -94,17 +94,17 @@ class SimpleTest(unittest.TestCase):
             s.r = set()
             
             def jrecv(parts):
-                print 'Recv', s.name, parts[0]['name'], '    ', s.r, s.sub.fd
+                #print 'Recv', s.name, parts[0]['name'], '    ', s.r, s.sub.fd
                 s.r.add( parts[0]['name'] )
                 if s.r == all_set:
-                    print 'DONE: ', s.name
+                    #print 'DONE: ', s.name
                     if not s.d.called:
                         s.d.callback(None)
 
             s.jrecv = jrecv
 
             def send():
-                print 'Send', s.name
+                #print 'Send', s.name
                 s.jsend(foo='bar')
                 s.t = reactor.callLater(0.5, send)
 
