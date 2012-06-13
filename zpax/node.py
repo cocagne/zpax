@@ -131,13 +131,11 @@ class BasicNode (JSONResponder):
 
     def __init__(self,
                  local_rep_addr,
-                 local_pub_sub_addr,
+                 local_pub_addr,
                  durable_dir=None,
                  object_id=None):
 
         self.node_uid         = local_rep_addr
-        self.local_rep_addr   = local_rep_addr
-        self.local_ps_addr    = local_pub_sub_addr
         self.quorum_size      = None
         self.sequence_number  = None
         self.accept_retry     = None
@@ -151,8 +149,8 @@ class BasicNode (JSONResponder):
         self.pax_pub          = tzmq.ZmqPubSocket()
         self.pax_sub          = None
 
-        self.pax_rep.bind(self.local_rep_addr)
-        self.pax_pub.bind(self.local_ps_addr)
+        self.pax_rep.bind(local_rep_addr)
+        self.pax_pub.bind(local_pub_addr)
         
         self.pax_rep.messageReceived = self._generateResponder('_REP_')
 
@@ -194,6 +192,15 @@ class BasicNode (JSONResponder):
             self.pax_sub.connect(x)
 
 
+    def change_quorum_size(self, new_quorum_size):
+        '''
+        Changes the quorum size to the new value. Note that this should only be
+        done by all nodes at approximately the same time to ensure consistency.
+        A simple way to ensure correctness is to use the Paxos algorithm itself
+        to choose the new quorum size (along with the corresponding configuration
+        information for the added and or removed nodes)
+        '''
+        self.mpax.change_quorum_size( new_quorum_size )
     
     #--------------------------------------------------------------------------
     # Subclass API

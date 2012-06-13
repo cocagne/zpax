@@ -7,7 +7,7 @@ from paxos import multi, basic
 from twisted.internet import defer, task, reactor
 
 
-
+_ZPAX_CONFIG_KEY='__zpax_config'
             
 
 class KeyValueDB (node.JSONResponder):
@@ -33,8 +33,6 @@ class KeyValueDB (node.JSONResponder):
                  database_filename=None,
                  catchup_retry_delay=2.0,
                  catchup_num_items=2):
-
-        seq_num = 0 # XXX Integrate Durable Objects into Basic Node
 
         if database_filename is None:
             database_filename = os.path.join(database_dir, 'db.sqlite')
@@ -76,11 +74,23 @@ class KeyValueDB (node.JSONResponder):
             self.req.connect(x)
 
 
+    def _loadConfiguration(self, cfg_str=None):
+        if cfg_str is None:
+            cfg_str = self.db.get_value(_ZPAX_CONFIG_KEY)
+
+        cfg = json.loads(cfg_str)
+        
+        if not self._remote_addrs == set(cfg['pub_addrs']):
+            self.connect( cfg['pub_addrs'] )
+        
+
+
     def initialize(self, quorum_size):
         self.kv_node.initialize(quorum_size)
 
         
     def connect(self, remote_pub_sub_addrs):
+        self._remote_addrs = set( remote_pub_sub_addrs )
         self.kv_node.connect( remote_pub_sub_addrs )
 
 
@@ -101,6 +111,8 @@ class KeyValueDB (node.JSONResponder):
 
 
     def onValueSet(self, key, value, instance_num):
+        if key == _ZPAX_CONFIG_KEY:
+            self._loadConfiguration( value )
         self.db.update_key( key, value, instance_num )        
         self.db_seq = instance_num
 
@@ -143,6 +155,8 @@ class KeyValueDB (node.JSONResponder):
         if msg['from_seq'] == self.db_seq:
             for key, val, seq_num in msg['key_val_seq_list']:
                 # XXX Convert to updating all keys in one commit
+                if key == _ZPAX_CONFIG_KEY:
+                    self._loadConfiguration(val)
                 self.db.update_key(key, val, seq_num)
                 
             self.db_seq = self.db.get_last_resolution()

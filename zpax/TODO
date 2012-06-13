@@ -1,19 +1,19 @@
 
-* Add durability support to node.py
-   * need to be able to fetch state from subclass
-
 * HMAC auth of PUB & REQ packets
 
 * Value encryption of PUB & REQ
 
 * Zpax Config
-   - Just part of keyval for now w/ special key name
+   - Bootstrapping: How to inject initial config?
 
-----------------
-Durability
-  basic.Node -- add pickle meth to ignore teh callback
-    * multi.MultiPaxos manually resets it (via method) on deserial
-  |-> Should scale to custom nodes that use custom MultiPaxos classes
-      on load, they can fix up any markers left by their known subclasses.
+   - Config JSON definition
 
-  Put durability into MultiPaxos class then.
+   - Test config modification
+
+   - SRP auth to pull initial config?
+      * could use Unix socket with root-only read permissions and rely
+        on out-of-band transfer. MUCH easier for first draft.
+      * Even easier, save config to separate file in addition to
+        the database.
+       
+
