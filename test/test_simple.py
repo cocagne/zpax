@@ -103,11 +103,11 @@ class SimpleTest(unittest.TestCase):
                 continue
             n = TestKV( 'ipc:///tmp/ts_{}_rep'.format(node_name),
                         'ipc:///tmp/ts_{}_pub'.format(node_name),
-                        'ipc:///tmp/ts_{}_rtr'.format(node_name),
-                        ['ipc:///tmp/ts_{}_pub'.format(n) for n in all_nodes],
+                        'ipc:///tmp/ts_{}_rtr'.format(node_name)
                       )
 
             n.initialize(self.quorum_size)
+            n.connect( ['ipc:///tmp/ts_{}_pub'.format(x) for x in all_nodes] )
             
             n.onLeadershipAcquired = gen_cb(node_name, self._on_leader_acq)
             n.onLeadershipLost     = gen_cb(node_name, self._on_leader_lost)

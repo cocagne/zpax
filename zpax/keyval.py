@@ -27,7 +27,6 @@ class KeyValueDB (node.JSONResponder):
     def __init__(self, node_uid,
                  local_paxos_rep_addr,
                  local_paxos_pub_sub_addr,
-                 remote_paxos_pub_sub_addrs,
                  local_rep_addr,
                  remote_rep_addrs,
                  database_dir,
@@ -51,7 +50,6 @@ class KeyValueDB (node.JSONResponder):
         self.kv_node = KeyValNode(self,
                                   local_paxos_rep_addr,
                                   local_paxos_pub_sub_addr,
-                                  remote_paxos_pub_sub_addrs,
                                   durable_dir,
                                   durable_id)
 
@@ -80,6 +78,10 @@ class KeyValueDB (node.JSONResponder):
 
     def initialize(self, quorum_size):
         self.kv_node.initialize(quorum_size)
+
+        
+    def connect(self, remote_pub_sub_addrs):
+        self.kv_node.connect( remote_pub_sub_addrs )
 
 
     def shutdown(self):
@@ -202,13 +204,11 @@ class KeyValNode (node.BasicNode):
                  kvdb,
                  local_rep_addr,
                  local_pub_sub_addr,
-                 remote_pub_sub_addrs,
                  durable_dir,
                  object_id):
 
         super(KeyValNode,self).__init__( local_rep_addr,
                                          local_pub_sub_addr,
-                                         remote_pub_sub_addrs,
                                          durable_dir,
                                          object_id)
         

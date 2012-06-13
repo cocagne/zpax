@@ -132,14 +132,12 @@ class BasicNode (JSONResponder):
     def __init__(self,
                  local_rep_addr,
                  local_pub_sub_addr,
-                 remote_pub_sub_addrs,
                  durable_dir=None,
                  object_id=None):
 
         self.node_uid         = local_rep_addr
         self.local_rep_addr   = local_rep_addr
         self.local_ps_addr    = local_pub_sub_addr
-        self.remote_ps_addrs  = remote_pub_sub_addrs
         self.quorum_size      = None
         self.sequence_number  = None
         self.accept_retry     = None
@@ -151,18 +149,12 @@ class BasicNode (JSONResponder):
         self.pax_rep          = tzmq.ZmqRepSocket()
         self.pax_req          = None                # Assigned on leadership change
         self.pax_pub          = tzmq.ZmqPubSocket()
-        self.pax_sub          = tzmq.ZmqSubSocket()
+        self.pax_sub          = None
 
         self.pax_rep.bind(self.local_rep_addr)
         self.pax_pub.bind(self.local_ps_addr)
         
-        self.pax_sub.subscribe       = 'zpax'        
-        self.pax_sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
-
         self.pax_rep.messageReceived = self._generateResponder('_REP_')
-
-        for x in remote_pub_sub_addrs:
-            self.pax_sub.connect(x)
 
         self.mpax                  = BasicMultiPaxos(durable_dir, object_id)
         self.mpax.node_factory     = self._node_factory
@@ -187,6 +179,19 @@ class BasicNode (JSONResponder):
         self.sequence_number = self.mpax.instance_num
         
         self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
+
+
+    def connect(self, remote_pub_sub_addrs):
+        if self.pax_sub is not None:
+            self.pax_sub.close()
+                        
+        self.pax_sub = tzmq.ZmqSubSocket()
+
+        self.pax_sub.subscribe       = 'zpax'        
+        self.pax_sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
+
+        for x in remote_pub_sub_addrs:
+            self.pax_sub.connect(x)
 
 
     
@@ -373,6 +378,20 @@ class BasicNode (JSONResponder):
             self.proposal_retry.cancel()
         self.current_proposal = None
         self.proposal_retry   = None
+
+
+    def _connect_req(self, new_leader_uid):
+        if self.pax_req is not None:
+            self.pax_req.close()
+
+        if new_leader_uid is not None:
+            self.pax_req = tzmq.ZmqReqSocket()
+
+            self.pax_req.messageReceived = self._generateResponder('_REQ_')
+        
+            self.pax_req.connect( new_leader_uid )
+
+            self._try_propose()
         
         
     #--------------------------------------------------------------------------
@@ -408,18 +427,8 @@ class BasicNode (JSONResponder):
     def _paxos_on_leadership_change(self, prev_leader_uid, new_leader_uid):
         if self.pax_rep is None:
             return # Ignore this if shutdown() has been called
-        
-        if self.pax_req is not None:
-            self.pax_req.close()
 
-        if new_leader_uid is not None:
-            self.pax_req = tzmq.ZmqReqSocket()
-
-            self.pax_req.messageReceived = self._generateResponder('_REQ_')
-        
-            self.pax_req.connect( new_leader_uid )
-
-            self._try_propose()
+        self._connect_req( new_leader_uid )
         
         self.onLeadershipChanged(prev_leader_uid, new_leader_uid)
 

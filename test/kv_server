@@ -32,11 +32,12 @@ def doit():
     reps     = [ 'tcp://127.0.0.1:444{}'.format(x) for x in ids.values() ]
 
     snode = keyval.KeyValueDB( lcl_pax_pub,
-                               lcl_pax_rep, lcl_pax_pub, pax_pubs,
+                               lcl_pax_rep, lcl_pax_pub, 
                                lcl_rep, reps,
                                '/tmp', ':memory:' )
 
     snode.initialize(2)
+    snode.connect( pax_pubs )
     
 
         

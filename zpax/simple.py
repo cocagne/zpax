@@ -19,14 +19,12 @@ class SimpleNode (node.BasicNode):
     
     def __init__(self, node_uid,
                  local_pub_sub_addr,   local_rtr_addr,
-                 remote_pub_sub_addrs,
                  initial_value='',
                  durable_dir=None,
                  object_id=None):
 
         super(SimpleNode,self).__init__( node_uid,
                                          local_pub_sub_addr,
-                                         remote_pub_sub_addrs,
                                          durable_dir,
                                          object_id )
 
