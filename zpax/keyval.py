@@ -25,8 +25,6 @@ class KeyValueDB (node.JSONResponder):
     with it's peers and will begin participating in Paxos instance resolutions.
     '''
     def __init__(self, node_uid,
-                 local_paxos_rep_addr,
-                 local_paxos_pub_sub_addr,
                  local_rep_addr,
                  remote_rep_addrs,
                  database_dir,
@@ -44,16 +42,10 @@ class KeyValueDB (node.JSONResponder):
             durable_dir = database_dir
             durable_id  = os.path.basename(database_filename + '.paxos')
             
-        
-        self.kv_node = KeyValNode(self,
-                                  local_paxos_rep_addr,
-                                  local_paxos_pub_sub_addr,
-                                  durable_dir,
-                                  durable_id)
+        self.kv_node = KeyValNode(self, node_uid, durable_dir, durable_id)
 
         self.catchup_retry_delay = catchup_retry_delay
         self.catchup_num_items   = catchup_num_items
-
             
         self.db            = db.DB( database_filename )
         self.db_seq        = self.db.get_last_resolution()
@@ -80,8 +72,8 @@ class KeyValueDB (node.JSONResponder):
 
         cfg = json.loads(cfg_str)
         
-        if not self._remote_addrs == set(cfg['pub_addrs']):
-            self.connect( cfg['pub_addrs'] )
+
+        #self.connect( cfg['pub_addrs'] )
         
 
 
@@ -89,9 +81,8 @@ class KeyValueDB (node.JSONResponder):
         self.kv_node.initialize(quorum_size)
 
         
-    def connect(self, remote_pub_sub_addrs):
-        self._remote_addrs = set( remote_pub_sub_addrs )
-        self.kv_node.connect( remote_pub_sub_addrs )
+    def connect(self, local_rep_addr, local_pub_addr, remote_pub_addrs):
+        self.kv_node.connect( local_rep_addr, local_pub_addr, remote_pub_addrs )
 
 
     def shutdown(self):
@@ -216,15 +207,11 @@ class KeyValNode (node.BasicNode):
 
     def __init__(self,
                  kvdb,
-                 local_rep_addr,
-                 local_pub_sub_addr,
+                 node_uid,
                  durable_dir,
                  object_id):
 
-        super(KeyValNode,self).__init__( local_rep_addr,
-                                         local_pub_sub_addr,
-                                         durable_dir,
-                                         object_id)
+        super(KeyValNode,self).__init__(node_uid, durable_dir, object_id)
         
         self.kvdb = kvdb
 

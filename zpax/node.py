@@ -129,13 +129,9 @@ class BasicNode (JSONResponder):
 
     hb_proposer_klass = BasicHeartbeatProposer
 
-    def __init__(self,
-                 local_rep_addr,
-                 local_pub_addr,
-                 durable_dir=None,
-                 object_id=None):
+    def __init__(self, node_uid, durable_dir=None, object_id=None):
 
-        self.node_uid         = local_rep_addr
+        self.node_uid         = node_uid
         self.quorum_size      = None
         self.sequence_number  = None
         self.accept_retry     = None
@@ -144,15 +140,14 @@ class BasicNode (JSONResponder):
         self.current_proposal = None
         self.proposal_retry   = None
 
-        self.pax_rep          = tzmq.ZmqRepSocket()
-        self.pax_req          = None                # Assigned on leadership change
-        self.pax_pub          = tzmq.ZmqPubSocket()
-        self.pax_sub          = None
+        self.local_rep_addr   = None
+        self.local_pub_addr   = None
+        self.remote_pub_addrs = None
 
-        self.pax_rep.bind(local_rep_addr)
-        self.pax_pub.bind(local_pub_addr)
-        
-        self.pax_rep.messageReceived = self._generateResponder('_REP_')
+        self.pax_rep          = None
+        self.pax_req          = None # Assigned on leadership change
+        self.pax_pub          = None
+        self.pax_sub          = None
 
         self.mpax                  = BasicMultiPaxos(durable_dir, object_id)
         self.mpax.node_factory     = self._node_factory
@@ -164,10 +159,7 @@ class BasicNode (JSONResponder):
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
 
-        if self.mpax.quorum_size is not None:
-            self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
-
-
+    
     def initialize(self, quorum_size):
         assert self.mpax.quorum_size is None, 'MultiPaxos instance already initialized'
         
@@ -175,21 +167,42 @@ class BasicNode (JSONResponder):
 
         self.quorum_size     = self.mpax.quorum_size
         self.sequence_number = self.mpax.instance_num
-        
-        self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
 
-
-    def connect(self, remote_pub_sub_addrs):
         if self.pax_sub is not None:
-            self.pax_sub.close()
-                        
-        self.pax_sub = tzmq.ZmqSubSocket()
+            self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
 
-        self.pax_sub.subscribe       = 'zpax'        
-        self.pax_sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
 
-        for x in remote_pub_sub_addrs:
-            self.pax_sub.connect(x)
+    def connect(self, local_rep_addr, local_pub_addr, remote_pub_addrs):
+        
+        if self.pax_rep is None or local_rep_addr != self.local_rep_addr:
+            if self.pax_rep:
+                self.pax_rep.close()
+            self.local_rep_addr = local_rep_addr
+            self.pax_rep        = tzmq.ZmqRepSocket()
+            self.pax_rep.bind(local_rep_addr)
+            self.pax_rep.messageReceived = self._generateResponder('_REP_')
+
+        if self.pax_pub is None or local_pub_addr != self.local_pub_addr:
+            if self.pax_pub:
+                self.pax_pub.close()
+            self.local_pub_addr = local_pub_addr
+            self.pax_pub        = tzmq.ZmqPubSocket()
+            self.pax_pub.bind(local_pub_addr)
+
+        if self.pax_sub is None or set(remote_pub_addrs) != set(self.remote_pub_addrs):
+            if self.pax_sub is not None:
+                self.pax_sub.close()
+            self.remote_pub_addrs = remote_pub_addrs
+            self.pax_sub          = tzmq.ZmqSubSocket()
+
+            self.pax_sub.subscribe       = 'zpax'        
+            self.pax_sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
+
+            for x in remote_pub_addrs:
+                self.pax_sub.connect(x)
+
+        if self.mpax.quorum_size is not None and not self.heartbeat_poller.running:
+            self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
 
 
     def change_quorum_size(self, new_quorum_size):

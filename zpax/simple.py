@@ -18,15 +18,12 @@ class SimpleNode (node.BasicNode):
     chatty = False
     
     def __init__(self, node_uid,
-                 local_pub_sub_addr,   local_rtr_addr,
+                 local_rtr_addr,
                  initial_value='',
                  durable_dir=None,
                  object_id=None):
 
-        super(SimpleNode,self).__init__( node_uid,
-                                         local_pub_sub_addr,
-                                         durable_dir,
-                                         object_id )
+        super(SimpleNode,self).__init__(node_uid, durable_dir, object_id)
 
         self.local_rtr_addr   = local_rtr_addr
         self.value            = initial_value
