@@ -159,9 +159,12 @@ class BasicNode (JSONResponder):
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
 
-    
+
+    def is_initialized(self):
+        return self.mpax.quorum_size is not None
+        
     def initialize(self, quorum_size):
-        assert self.mpax.quorum_size is None, 'MultiPaxos instance already initialized'
+        assert not self.is_initialized(), 'MultiPaxos instance already initialized'
         
         self.mpax.initialize( self.node_uid, quorum_size )
 

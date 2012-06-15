@@ -1,19 +1,15 @@
 
+* Convert connect(..., remote_pub_addrs) to remote_nodes
+  where remote_nodes is a map of node_uid => (rep_addr, pub_addr)
+  - node.py can then lookup the rep addr from the leader's node_uid
+
+* Zpax Config
+
 * HMAC auth of PUB & REQ packets
 
 * Value encryption of PUB & REQ
 
-* Zpax Config
-   - Bootstrapping: How to inject initial config?
 
-   - Config JSON definition
-
-   - Test config modification
-
-   - SRP auth to pull initial config?
-      * could use Unix socket with root-only read permissions and rely
-        on out-of-band transfer. MUCH easier for first draft.
-      * Even easier, save config to separate file in addition to
-        the database.
+   
        
 
