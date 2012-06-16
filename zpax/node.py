@@ -132,8 +132,6 @@ class BasicNode (JSONResponder):
     def __init__(self, node_uid, durable_dir=None, object_id=None):
 
         self.node_uid         = node_uid
-        self.quorum_size      = None
-        self.sequence_number  = None
         self.accept_retry     = None
         self.delayed_prepare  = None
 
@@ -153,23 +151,22 @@ class BasicNode (JSONResponder):
         self.mpax.node_factory     = self._node_factory
         self.mpax.on_resolution_cb = self._on_proposal_resolution
 
-        self.quorum_size      = self.mpax.quorum_size
-        self.sequence_number  = self.mpax.instance_num
-        
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
 
+        
+    quorum_size     = property( lambda self: self.mpax.quorum_size  )
+    sequence_number = property( lambda self: self.mpax.instance_num )
 
+    
     def is_initialized(self):
         return self.mpax.quorum_size is not None
-        
+
+    
     def initialize(self, quorum_size):
         assert not self.is_initialized(), 'MultiPaxos instance already initialized'
         
         self.mpax.initialize( self.node_uid, quorum_size )
-
-        self.quorum_size     = self.mpax.quorum_size
-        self.sequence_number = self.mpax.instance_num
 
         if self.pax_sub is not None:
             self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
@@ -285,8 +282,6 @@ class BasicNode (JSONResponder):
 
         self._cancel_proposal()
         
-        self.sequence_number = new_sequence_number
-        
         if self.mpax.node.proposer.leader:
             self.paxos_on_leadership_lost()
             
@@ -333,6 +328,7 @@ class BasicNode (JSONResponder):
         self.pax_rep = None
         if self.pax_req is not None:
             self.pax_req.close()
+            self.pax_req = None
         self.pax_pub.close()
         self.pax_sub.close()
         if self.heartbeat_poller.running:
@@ -406,6 +402,7 @@ class BasicNode (JSONResponder):
     def _connect_req(self, new_leader_uid):
         if self.pax_req is not None:
             self.pax_req.close()
+            self.pax_req = None
 
         if new_leader_uid is not None:
             self.pax_req = tzmq.ZmqReqSocket()
@@ -579,8 +576,7 @@ class BasicNode (JSONResponder):
             self.accept_retry.cancel()
             self.accept_retry = None
             
-        self.value            = value
-        self.sequence_number  = instance_num + 1
+        self.value = value
 
         self.onProposalResolution(instance_num, value)
     
