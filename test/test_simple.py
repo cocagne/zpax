@@ -97,7 +97,16 @@ class SimpleTest(unittest.TestCase):
             def cb():
                 func(x)
             return cb
-        
+
+        zpax_nodes = dict()
+
+        for node_name in all_nodes:
+            t = ('ipc:///tmp/ts_{}_rep'.format(node_name),
+                 'ipc:///tmp/ts_{}_pub'.format(node_name))
+            
+            zpax_nodes[ 'ipc:///tmp/ts_{}_rep'.format(node_name) ] = t
+
+            
         for node_name in node_names.split():
             if not node_name in all_nodes:
                 continue
@@ -105,9 +114,10 @@ class SimpleTest(unittest.TestCase):
                        'ipc:///tmp/ts_{}_rtr'.format(node_name))
 
             n.initialize(self.quorum_size)
-            n.connect( 'ipc:///tmp/ts_{}_rep'.format(node_name),
-                       'ipc:///tmp/ts_{}_pub'.format(node_name),
-                       ['ipc:///tmp/ts_{}_pub'.format(x) for x in all_nodes] )
+            #n.connect( 'ipc:///tmp/ts_{}_rep'.format(node_name),
+            #           'ipc:///tmp/ts_{}_pub'.format(node_name),
+            #           ['ipc:///tmp/ts_{}_pub'.format(x) for x in all_nodes] )
+            n.connect( zpax_nodes )
             
             n.onLeadershipAcquired = gen_cb(node_name, self._on_leader_acq)
             n.onLeadershipLost     = gen_cb(node_name, self._on_leader_lost)

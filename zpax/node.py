@@ -138,9 +138,7 @@ class BasicNode (JSONResponder):
         self.current_proposal = None
         self.proposal_retry   = None
 
-        self.local_rep_addr   = None
-        self.local_pub_addr   = None
-        self.remote_pub_addrs = None
+        self.zpax_nodes       = None # Dictionary of node_uid -> (rep_addr, pub_addr)
 
         self.pax_rep          = None
         self.pax_req          = None # Assigned on leadership change
@@ -172,33 +170,46 @@ class BasicNode (JSONResponder):
             self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
 
 
-    def connect(self, local_rep_addr, local_pub_addr, remote_pub_addrs):
+    def connect(self, zpax_nodes):
+
+        if self.zpax_nodes == zpax_nodes:
+            return # already connected
+
+        if not self.node_uid in zpax_nodes:
+            raise Exception('Missing local node configuration')
+
+        if self.zpax_nodes is None:
+            self.zpax_nodes = zpax_nodes
+                    
+        def local_addr_changed(i):
+            return self.zpax_nodes[self.node_uid][i] != zpax_nodes[self.node_uid][i]
         
-        if self.pax_rep is None or local_rep_addr != self.local_rep_addr:
+        if self.pax_rep is None or local_addr_changed(0):
             if self.pax_rep:
                 self.pax_rep.close()
-            self.local_rep_addr = local_rep_addr
-            self.pax_rep        = tzmq.ZmqRepSocket()
-            self.pax_rep.bind(local_rep_addr)
+            self.pax_rep = tzmq.ZmqRepSocket()
+            self.pax_rep.bind(zpax_nodes[self.node_uid][0])
             self.pax_rep.messageReceived = self._generateResponder('_REP_')
 
-        if self.pax_pub is None or local_pub_addr != self.local_pub_addr:
+        if self.pax_pub is None or local_addr_changed(1):
             if self.pax_pub:
                 self.pax_pub.close()
-            self.local_pub_addr = local_pub_addr
-            self.pax_pub        = tzmq.ZmqPubSocket()
-            self.pax_pub.bind(local_pub_addr)
+            self.pax_pub = tzmq.ZmqPubSocket()
+            self.pax_pub.bind(zpax_nodes[self.node_uid][1])
 
-        if self.pax_sub is None or set(remote_pub_addrs) != set(self.remote_pub_addrs):
+        prev_remote = set( t[1] for t in self.zpax_nodes.itervalues() )
+        cur_remote  = set( t[1] for t in zpax_nodes.itervalues()      )
+
+        if self.pax_sub is None or prev_remote != cur_remote:
             if self.pax_sub is not None:
                 self.pax_sub.close()
-            self.remote_pub_addrs = remote_pub_addrs
-            self.pax_sub          = tzmq.ZmqSubSocket()
+
+            self.pax_sub = tzmq.ZmqSubSocket()
 
             self.pax_sub.subscribe       = 'zpax'        
             self.pax_sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
 
-            for x in remote_pub_addrs:
+            for x in cur_remote:
                 self.pax_sub.connect(x)
 
         if self.mpax.quorum_size is not None and not self.heartbeat_poller.running:
