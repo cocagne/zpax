@@ -420,7 +420,7 @@ class BasicNode (JSONResponder):
 
             self.pax_req.messageReceived = self._generateResponder('_REQ_')
         
-            self.pax_req.connect( new_leader_uid )
+            self.pax_req.connect( self.zpax_nodes[new_leader_uid][0] )
 
             self._try_propose()
         
