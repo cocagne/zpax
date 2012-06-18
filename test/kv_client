@@ -18,7 +18,7 @@ import select
 
 from twisted.internet import reactor, defer
 
-from zpax import tzmq
+from zpax import tzmq, keyval
 
 INIT_COUNT=15
 
@@ -30,6 +30,23 @@ val  = sys.argv[3] if len(sys.argv) > 3 else None
 
 if len(sys.argv) < 2:
     print 'cmd <node> <key> [value]'
+
+def gencfg():
+    ids = dict( a = 1, b = 2, c = 3 )
+
+    snode = None
+
+    nodes = list()
+
+    for i in ids.itervalues():
+        pax_rep = 'tcp://127.0.0.1:222{}'.format(i)
+        pax_pub = 'tcp://127.0.0.1:333{}'.format(i)
+        nodes.append( dict(uid=pax_pub, pub_addr=pax_pub, rep_addr=pax_rep) )
+
+        cfg = dict( nodes=nodes )
+
+    return json.dumps(cfg)
+
 
 def doit():
 
@@ -63,6 +80,10 @@ def doit():
         s.send( json.dumps( dict(type='propose_value', key=key, value=val) ) )
     elif key == 'init':
         s.send( json.dumps( dict(type='propose_value', key='foo0', value='foo0') ) )
+    elif key == 'config':
+        s.send( json.dumps( dict(type='propose_value',
+                                 key=keyval._ZPAX_CONFIG_KEY,
+                                 value=gencfg()) ) )
     elif key:
         s.send( json.dumps( dict(type='query_value', key=key) ) )
 

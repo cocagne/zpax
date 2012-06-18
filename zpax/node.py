@@ -287,7 +287,7 @@ class BasicNode (JSONResponder):
         if self.mpax.node.proposer.leader:
             self.paxos_on_leadership_lost()
             
-        self.mpax.set_instance_number(self.sequence_number)
+        self.mpax.set_instance_number(new_sequence_number)
 
         
     def proposeValue(self, value, sequence_number=None):

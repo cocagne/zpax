@@ -87,7 +87,7 @@ class KeyValueDB (node.JSONResponder):
 
         elif self.kv_node.quorum_size != quorum_size:
             self.kv_node.changeQuorumSize( quorum_size )
-
+            
         self.kv_node.connect( zpax_nodes )
 
 
