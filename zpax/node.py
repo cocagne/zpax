@@ -171,7 +171,8 @@ class BasicNode (JSONResponder):
 
 
     def connect(self, zpax_nodes):
-
+        # Dictionary of node_uid -> (rep_addr, pub_addr)
+        
         if self.zpax_nodes == zpax_nodes:
             return # already connected
 
@@ -216,16 +217,6 @@ class BasicNode (JSONResponder):
             self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
 
 
-    def change_quorum_size(self, new_quorum_size):
-        '''
-        Changes the quorum size to the new value. Note that this should only be
-        done by all nodes at approximately the same time to ensure consistency.
-        A simple way to ensure correctness is to use the Paxos algorithm itself
-        to choose the new quorum size (along with the corresponding configuration
-        information for the added and or removed nodes)
-        '''
-        self.mpax.change_quorum_size( new_quorum_size )
-    
     #--------------------------------------------------------------------------
     # Subclass API
     #
@@ -365,6 +356,17 @@ class BasicNode (JSONResponder):
             self.onBehindInSequence()
             
         return seq == self.sequence_number
+
+
+    def changeQuorumSize(self, new_quorum_size):
+        '''
+        Changes the quorum size to the new value. Note that this should only be
+        done by all nodes at approximately the same time to ensure consistency.
+        A simple way to ensure correctness is to use the Paxos algorithm itself
+        to choose the new quorum size (along with the corresponding configuration
+        information for the added and or removed nodes)
+        '''
+        self.mpax.change_quorum_size( new_quorum_size )
             
     #--------------------------------------------------------------------------
     # Helper Methods

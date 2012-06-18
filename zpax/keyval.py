@@ -72,35 +72,37 @@ class KeyValueDB (node.JSONResponder):
 
         cfg = json.loads(cfg_str)
 
-        local_rep_addr   = None
-        local_pub_addr   = None
-        remote_pub_addrs = list()
+        zpax_nodes = dict()
 
         for n in cfg['nodes']:
-            remote_pub_addrs.append( n['pub_addr'] )
-            
-            if n['uid'] == self.kv_node.node_uid:
-                local_rep_addr = n['rep_addr']
-                local_pub_addr = n['pub_addr']
+            zpax_nodes[ n['uid'] ] = (n['rep_addr'], n['pub_addr'])
 
-        if not local_rep_addr or not local_pub_addr:
-            raise Exception('Zpax configuration does not contain node {0}'.format(self.kv_node.node_uid))
+        if 'quorum_size' in cfg:
+            quorum_size = cfg['quorum_size']
+        else:
+            quorum_size = len(cfg['nodes'])/2 + 1
                 
         if not self.kv_node.is_initialized():
-            self.kv_node.initialize( len(cfg['nodes'])/2 + 1 )
+            self.kv_node.initialize( quorum_size )
 
-        self.kv_node.connect( local_rep_addr, local_pub_addr, remote_pub_addrs )
+        elif self.kv_node.quorum_size != quorum_size:
+            self.kv_node.changeQuorumSize( quorum_size )
 
+        self.kv_node.connect( zpax_nodes )
+
+
+    def isInitialized(self):
+        return self.db.get_value(_ZPAX_CONFIG_KEY) is not None
+
+    
+    def initialize(self, config_str):
+        if self.isInitialized():
+            raise Exception('Node already initialized')
         
+        self.db.update_key(_ZPAX_CONFIG_KEY, config_str, -1)
+        self._loadConfiguration()
 
-    def initialize(self, quorum_size):
-        self.kv_node.initialize(quorum_size)
-
-        
-    def connect(self, local_rep_addr, local_pub_addr, remote_pub_addrs):
-        self.kv_node.connect( local_rep_addr, local_pub_addr, remote_pub_addrs )
-
-
+                
     def shutdown(self):
         self.req.close()
         self.rep.close()
@@ -182,6 +184,8 @@ class KeyValueDB (node.JSONResponder):
     def _REP_propose_value(self, header):
         print 'Proposing ', header
         try:
+            #if header['key'] == _ZPAX_CONFIG_KEY:
+            #    raise Exception('Access Denied')
             jstr = json.dumps( [header['key'], header['value']] )
             self.kv_node.proposeValue(jstr)
             self.rep_reply( proposed = True )
@@ -192,8 +196,12 @@ class KeyValueDB (node.JSONResponder):
             
     def _REP_query_value(self, header):
         print 'Querying ', header
-        print 'DB RESULT: ', self.db.get_value(header['key'])
-        self.rep_reply( value = self.db.get_value(header['key']) )
+        if header['key'] == _ZPAX_CONFIG_KEY:
+            #self.rep_reply(error='Access Denied')
+            self.rep_reply( value = self.db.get_value(header['key']) )
+        else:
+            print 'DB RESULT: ', self.db.get_value(header['key'])
+            self.rep_reply( value = self.db.get_value(header['key']) )
 
 
     def _REP_catchup_request(self, header):
