@@ -283,7 +283,6 @@ class BasicNode (JSONResponder):
             return msg_parts[1:]
             
 
-
     #--------------------------------------------------------------------------
     # Subclass API
     #
