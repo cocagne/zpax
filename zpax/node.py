@@ -1,5 +1,7 @@
 import json
 import random
+import hashlib
+import hmac
 
 from zpax import tzmq
 
@@ -91,6 +93,10 @@ class JSONResponder (object):
         '''
         def on_rcv(msg_parts):
             msg_parts = parts_transform(msg_parts)
+            
+            if msg_parts is None:
+                return
+            
             try:
                 parts = [ json.loads(p) for p in msg_parts ]
             except ValueError:
@@ -152,6 +158,10 @@ class BasicNode (JSONResponder):
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
 
+        # Optional Message Authentication & Encryption attributes
+        self.hmac_key  = None
+        self.value_key = None
+
         
     quorum_size     = property( lambda self: self.mpax.quorum_size  )
     sequence_number = property( lambda self: self.mpax.instance_num )
@@ -212,13 +222,27 @@ class BasicNode (JSONResponder):
             self.pax_sub = tzmq.ZmqSubSocket()
 
             self.pax_sub.subscribe       = 'zpax'        
-            self.pax_sub.messageReceived = self._generateResponder('_SUB_', lambda x : x[1:])
+            self.pax_sub.messageReceived = self._generateResponder('_SUB_', self._check_hmac)
 
             for x in cur_remote:
                 self.pax_sub.connect(x)
 
         if self.mpax.quorum_size is not None and not self.heartbeat_poller.running:
             self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
+
+
+    def _check_hmac(self, msg_parts):
+        if self.hmac_key:
+            h = hmac.new(self.hmac_key, digestmod=hashlib.sha1)
+            for jp in msg_parts[2:]:
+                h.update(jp)
+            if h.digest() == msg_parts[1]:
+                return msg_parts[2:]
+            else:
+                return None # Invalid HMAC, drop message
+        else:
+            return msg_parts[1:]
+            
 
 
     #--------------------------------------------------------------------------
@@ -317,7 +341,15 @@ class BasicNode (JSONResponder):
         
         msg_stack = [ 'zpax' ]
 
-        msg_stack.extend( json.dumps(p) for p in parts )
+        jparts = [ json.dumps(p) for p in parts ]
+
+        if self.hmac_key:
+            h = hmac.new(self.hmac_key, digestmod=hashlib.sha1)
+            for jp in jparts:
+                h.update(jp)
+            msg_stack.append( h.digest() )
+
+        msg_stack.extend( jparts )
         
         self.pax_pub.send( msg_stack )
         self.pax_sub.messageReceived( msg_stack )

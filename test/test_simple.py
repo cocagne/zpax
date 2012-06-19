@@ -91,7 +91,7 @@ class SimpleTest(unittest.TestCase):
         return delay(0.05)
             
 
-    def start(self,  node_names, chatty=False):
+    def start(self,  node_names, chatty=False, hmac_key=None):
 
         def gen_cb(x, func):
             def cb():
@@ -115,7 +115,9 @@ class SimpleTest(unittest.TestCase):
             #           'ipc:///tmp/ts_{}_rtr'.format(node_name))
             
             n = TestKV(node_name,'ipc:///tmp/ts_{}_rtr'.format(node_name))
-                       
+
+            if hmac_key:
+                n.hmac_key = hmac_key
 
             n.initialize(self.quorum_size)
             n.connect( zpax_nodes )
@@ -343,4 +345,26 @@ class SimpleTest(unittest.TestCase):
         self._resolve(leader)
         
         yield d
+
+
+    def test_hmac(self):
+        self.dleader = defer.Deferred()
+        
+        self.start('a b c', hmac_key='foobar')
+
+        d = defer.Deferred()
+
+        def on_resolve(instance_num, value):
+            self.assertEquals( value, 'foo' )
+            d.callback(None)
+            self.seq += 1
+            
+        def on_leader(tpl):
+            self.nodes[tpl[1]].onProposalResolution = on_resolve
+            #self.nodes[tpl[1]].chatty = True
+            c = self.new_client(tpl[1])
+            c.send( json.dumps( dict(type='propose_value', sequence_number=self.seq, value='foo') ) )
+        
+        self.dleader.addCallback( on_leader )
+        return d
         
