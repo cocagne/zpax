@@ -1,7 +1,9 @@
+import os
 import json
 import random
 import hashlib
 import hmac
+import base64
 
 from zpax import tzmq
 
@@ -9,6 +11,11 @@ from paxos import multi, basic
 from paxos.proposers import heartbeat
 
 from twisted.internet import defer, task, reactor
+
+try:
+    from Crypto.Cipher import AES
+except ImportError:
+    AES = None
 
 
 class ProposalFailed(Exception):
@@ -26,6 +33,38 @@ class ValueAlreadyProposed(ProposalFailed):
     
     def __init__(self):
         super(ValueAlreadyProposed,self).__init__('Value Already Proposed')
+
+
+
+def encrypt_value( key, value ):
+    if AES is None:
+        raise Exception('Missing Pycrypto module. Encryption is not supported')
+    
+    iv = os.urandom(AES.block_size)
+
+    c = AES.new(key, AES.MODE_CBC, iv)
+
+    # Trailing spaces are legal in JSON so we'll use that for padding
+    if len(value) % c.block_size != 0:
+        value += ' ' * (c.block_size - len(value)%c.block_size)
+
+    return 'ENC:' + base64.b64encode(iv + c.encrypt(value))
+
+
+def decrypt_value( key, cipher_txt ):
+    if AES is None:
+        raise Exception('Missing Pycrypto module. Encryption is not supported')
+
+    assert cipher_txt.startswith('ENC:')
+
+    cipher_txt = base64.b64decode(cipher_txt[4:])
+
+    iv = cipher_txt[:AES.block_size]
+    cv = cipher_txt[AES.block_size:]
+
+    c = AES.new(key, AES.MODE_CBC, iv)
+    
+    return c.decrypt(cv).rstrip()
 
 
 class BasicHeartbeatProposer (heartbeat.Proposer):
@@ -328,6 +367,9 @@ class BasicNode (JSONResponder):
         if self.mpax.node.acceptor.accepted_value is not None:
             raise ValueAlreadyProposed()
 
+        if self.value_key:
+            value = encrypt_value( self.value_key, value )
+
         self._set_proposal(value)
 
 
@@ -609,8 +651,11 @@ class BasicNode (JSONResponder):
         #print 'Proposal made. Seq = ', self.sequence_number, 'Req: ', header
         if header['seq_num'] == self.sequence_number:
             if self.mpax.node.acceptor.accepted_value is None:
+                value = header['value']
+                if self.value_key and not value.startswith('ENC:'):
+                    value = encrypt_value(self.value_key, value)
                 #print 'Setting proposal'
-                self.mpax.set_proposal(self.sequence_number, header['value'])
+                self.mpax.set_proposal(self.sequence_number, value)
                 
         self.pax_rep.send( json.dumps(dict(type='value_proposed')) )
 
@@ -625,7 +670,8 @@ class BasicNode (JSONResponder):
             self.accept_retry.cancel()
             self.accept_retry = None
             
-        self.value = value
+        if self.value_key:
+            value = decrypt_value(self.value_key, value)
 
         self.onProposalResolution(instance_num, value)
     

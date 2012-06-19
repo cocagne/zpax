@@ -91,7 +91,7 @@ class SimpleTest(unittest.TestCase):
         return delay(0.05)
             
 
-    def start(self,  node_names, chatty=False, hmac_key=None):
+    def start(self,  node_names, chatty=False, hmac_key=None, value_key=None):
 
         def gen_cb(x, func):
             def cb():
@@ -118,6 +118,9 @@ class SimpleTest(unittest.TestCase):
 
             if hmac_key:
                 n.hmac_key = hmac_key
+
+            if value_key:
+                n.value_key = value_key
 
             n.initialize(self.quorum_size)
             n.connect( zpax_nodes )
@@ -367,4 +370,57 @@ class SimpleTest(unittest.TestCase):
         
         self.dleader.addCallback( on_leader )
         return d
+
+    
+    def test_basic_encryption(self):
+        key = '0123456789ABCDEF'
+        val = '{foo=5}'
+        cip = node.encrypt_value( key, val )
+        dec = node.decrypt_value( key, cip )
+        self.assertEquals(val, dec)
+
+
+    def test_encrypted_value(self):
+        self.dleader = defer.Deferred()
+        
+        self.start('a b c', value_key='0123456789ABCDEF')
+
+        d = defer.Deferred()
+
+        def on_resolve(instance_num, value):
+            self.assertEquals( value, 'foo' )
+            d.callback(None)
+            self.seq += 1
+            
+        def on_leader(tpl):
+            self.nodes[tpl[1]].onProposalResolution = on_resolve
+            #self.nodes[tpl[1]].chatty = True
+            c = self.new_client(tpl[1])
+            c.send( json.dumps( dict(type='propose_value', sequence_number=self.seq, value='foo') ) )
+        
+        self.dleader.addCallback( on_leader )
+        return d
+
+
+    def test_hmac_and_encrypted_value(self):
+        self.dleader = defer.Deferred()
+        
+        self.start('a b c', hmac_key='foobar', value_key='0123456789ABCDEF')
+
+        d = defer.Deferred()
+
+        def on_resolve(instance_num, value):
+            self.assertEquals( value, 'foo' )
+            d.callback(None)
+            self.seq += 1
+            
+        def on_leader(tpl):
+            self.nodes[tpl[1]].onProposalResolution = on_resolve
+            #self.nodes[tpl[1]].chatty = True
+            c = self.new_client(tpl[1])
+            c.send( json.dumps( dict(type='propose_value', sequence_number=self.seq, value='foo') ) )
+        
+        self.dleader.addCallback( on_leader )
+        return d
+        
         
