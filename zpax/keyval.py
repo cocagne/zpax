@@ -7,7 +7,7 @@ from paxos import multi, basic
 from twisted.internet import defer, task, reactor
 
 
-_ZPAX_CONFIG_KEY='__zpax_config'
+_ZPAX_CONFIG_KEY = '__zpax_config__'
             
 
 class KeyValueDB (node.JSONResponder):
@@ -72,22 +72,13 @@ class KeyValueDB (node.JSONResponder):
 
         cfg = json.loads(cfg_str)
 
-        local_rep_addr   = None
-        local_pub_addr   = None
-        remote_pub_addrs = list()
+        zpax_nodes = dict()
 
         for n in cfg['nodes']:
-            remote_pub_addrs.append( n['pub_addr'] )
-            
-            if n['uid'] == self.kv_node.node_uid:
-                local_rep_addr = n['rep_addr']
-                local_pub_addr = n['pub_addr']
-
-        if not local_rep_addr or not local_pub_addr:
-            raise Exception('Zpax configuration does not contain node {0}'.format(self.kv_node.node_uid))
+            zpax_nodes[ n['uid'] ] = (n['rep_addr'], n['pub_addr'])
                 
         if not self.kv_node.is_initialized():
-            self.kv_node.initialize( len(cfg['nodes'])/2 + 1 )
+            self.kv_node.initialize( len(zpax_nodes)/2 + 1 )
 
         self.kv_node.connect( local_rep_addr, local_pub_addr, remote_pub_addrs )
 

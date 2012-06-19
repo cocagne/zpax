@@ -180,6 +180,10 @@ class BasicNode (JSONResponder):
 
         if self.zpax_nodes is None:
             self.zpax_nodes = zpax_nodes
+
+        if not self.is_initialized():
+            # If no explicit quorum size has been set. Default to the minimum
+            self.initialize( len(zpax_nodes)/2 + 1 )
                     
         def local_addr_changed(i):
             return self.zpax_nodes[self.node_uid][i] != zpax_nodes[self.node_uid][i]

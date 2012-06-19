@@ -9,7 +9,20 @@
 
 * Value encryption of PUB & REQ
 
-
+* --- Distributed Durability ---
+   * Send recovery state to an acknowledged majority of nodes
+   * Can AES encrypt state so Pickle will still work
+   * Recovery is retreiving state from a majority of nodes
+      |=> highest serial number wins
+   
+   * For > threshold unrecoverable node crashes:
+      - Use normal durable paxos for an "error recovery" consensus channel.
+      - If > threshold "unrecoverable state" errors are received for a proposal,
+        the current recovery number is incremented.
+      - All nodes seeing the increment throw away all state for the current Paxos
+        instance and start fresh.
+      - The recovery number must be specific to a particular instance. Always reset
+        to zero on resolution.
    
        
 
