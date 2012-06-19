@@ -1,5 +1,5 @@
 #!/usr/bin/python
-
+import json
 import sys
 import os.path
 
@@ -17,8 +17,19 @@ from twisted.internet import reactor, defer
 
 
 ids = dict( a = 1, b = 2, c = 3 )
+#ids = dict( a = 1, b = 2 )
 
 snode = None
+
+nodes = list()
+
+for i in ids.itervalues():
+    pax_rep = 'tcp://127.0.0.1:222{}'.format(i)
+    pax_pub = 'tcp://127.0.0.1:333{}'.format(i)
+    nodes.append( dict(uid=pax_pub, pub_addr=pax_pub, rep_addr=pax_rep) )
+
+cfg = dict( nodes=nodes )
+
 
 def doit():
     global snode
@@ -31,16 +42,12 @@ def doit():
     pax_pubs = [ 'tcp://127.0.0.1:333{}'.format(x) for x in ids.values() ]
     reps     = [ 'tcp://127.0.0.1:444{}'.format(x) for x in ids.values() ]
 
-    snode = keyval.KeyValueDB( lcl_pax_pub,
-                               lcl_pax_rep, lcl_pax_pub, 
-                               lcl_rep, reps,
+    snode = keyval.KeyValueDB( lcl_pax_pub, lcl_rep, reps,
                                '/tmp', ':memory:' )
 
-    snode.initialize(2)
-    snode.connect( pax_pubs )
-    
-
-        
+    snode.initialize( json.dumps(cfg) )
+    #snode.connect( pax_pubs )
+            
 reactor.callWhenRunning(doit)
 reactor.run()
 
