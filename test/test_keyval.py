@@ -4,15 +4,19 @@ import sys
 import unittest
 import random
 
-this_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append( os.path.dirname(this_dir) )
+pd = os.path.dirname
 
-from zpax import db
+this_dir = pd(os.path.abspath(__file__))
+
+sys.path.append( pd(this_dir) )
+sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
+
+from zpax import keyval
 
 class BasicDBTest(unittest.TestCase):
 
     def setUp(self):
-        self.db = db.DB(':memory:')
+        self.db = keyval.SqliteDB(':memory:')
 
     def test_update_missing_value(self):
         self.assertTrue(self.db.get_value('foo') is None)

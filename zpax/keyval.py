@@ -1,14 +1,164 @@
 import os.path
+import sqlite3
 import json
 
-from zpax import tzmq, db, node
+from zpax import tzmq, node
 from paxos import multi, basic
 
 from twisted.internet import defer, task, reactor
 
 
 _ZPAX_CONFIG_KEY = '__zpax_config__'
+
+
+tables = dict()
+
+tables['kv'] = '''
+key      text PRIMARY KEY,
+value    text,
+resolution integer
+'''
+
+class SqliteDB (object):
+
+    def __init__(self, fn):
+        self._fn = fn
+        create = not os.path.exists(fn)
+
+        
+        self._con = sqlite3.connect(fn)
+        self._cur = self._con.cursor()
+
+        if create:
+            self.create_db()
+
             
+    def create_db(self):
+        cur = self._con.cursor()
+
+        for k,v in tables.iteritems():
+            cur.execute('create table {} ({})'.format(k,v))
+
+        cur.execute('create index resolution_index on kv (resolution)')
+
+        self._con.commit()
+        cur.close()
+
+
+    def get_value(self, key):
+        r = self._cur.execute('SELECT value FROM kv WHERE key=?', (key,)).fetchone()
+        if r:
+            return r[0]
+
+        
+    def get_resolution(self, key):
+        r = self._cur.execute('SELECT resolution FROM kv WHERE key=?', (key,)).fetchone()
+        if r:
+            return r[0]
+
+        
+    def update_key(self, key, value, resolution_number):
+        prevpn = self.get_resolution(key)
+        #print 'PREV REV', prevpn, 'NEW REV', resolution_number
+
+        if prevpn is None:
+            self._cur.execute('INSERT INTO kv VALUES (?, ?, ?)',
+                              (key, value, resolution_number))
+            self._con.commit()
+            
+        elif resolution_number > prevpn:
+            #print 'UPDATING TO: ', value
+            self._cur.execute('UPDATE kv SET value=?, resolution=? WHERE key=?',
+                              (value, resolution_number, key))
+            self._con.commit()
+
+            
+    def get_last_resolution(self):
+        r = self._cur.execute('SELECT MAX(resolution) FROM kv').fetchone()[0]
+
+        return r if r is not None else -1
+
+    
+    def iter_updates(self, start_resolution, end_resolution=2**32):
+        c = self._con.cursor()
+        c.execute('SELECT key,value,resolution FROM kv WHERE resolution>? AND resolution<?  ORDER BY resolution',
+                  (start_resolution, end_resolution))
+        return c
+
+
+
+class KeyValNode (node.BasicNode):
+    '''
+    This class implements the Paxos logic for KeyValueDB. It extends
+    node.BasicNode in two significant ways. First, it embeds within
+    each heartbeat message the current multi-paxos sequence number. This
+    allows late-joining/recovering nodes to quickly discover that their
+    databases are out of sync and begin the catchup process. Second,
+    this node drops all Paxos messages while the database is catching
+    up. This prevents newly chosen values from entering the database
+    prior to the completion of the catchup process. 
+    '''
+
+    def __init__(self,
+                 kvdb,
+                 node_uid,
+                 durable_dir,
+                 object_id):
+
+        super(KeyValNode,self).__init__(node_uid, durable_dir, object_id)
+        
+        self.kvdb = kvdb
+
+        
+            
+    def getHeartbeatData(self):
+        return dict( seq_num = self.currentInstanceNum() )
+    
+    
+    def onHeartbeat(self, data):
+        if data['seq_num'] - 1 > self.kvdb.getMaxDBSequenceNumber():
+            if data['seq_num'] > self.currentInstanceNum():
+                self.slewSequenceNumber( data['seq_num'] )
+
+            self.kvdb.catchup()
+
+
+    # Override the sequence checking function in the baseclass to cause all
+    # packets to be dropped from our Paxos implementation while our database
+    # is behind
+    def _check_sequence(self, header):
+        return super(KeyValNode,self)._check_sequence(header) and not self.kvdb.isCatchingUp()
+
+    
+    def onLeadershipAcquired(self):
+        print self.node_uid, 'I have the leader!'
+
+
+    def onLeadershipLost(self):
+        print self.node_uid, 'I LOST the leader!'
+
+
+    def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
+        print '*** Change of guard: ', prev_leader_uid, new_leader_uid
+
+
+    def onBehindInSequence(self):
+        self.kvdb.catchup()
+
+        
+    def onProposalResolution(self, instance_num, value):
+        # This method is only called when our database is current
+        
+        print '*** Resolution! ', instance_num, repr(value)
+
+        #print '** DECODED: ', json.loads(value)
+
+        key, value = json.loads(value)
+
+        self.kvdb.onValueSet( key, value, instance_num )
+        
+
+
 
 class KeyValueDB (node.JSONResponder):
     '''
@@ -47,7 +197,7 @@ class KeyValueDB (node.JSONResponder):
         self.catchup_retry_delay = catchup_retry_delay
         self.catchup_num_items   = catchup_num_items
             
-        self.db            = db.DB( database_filename )
+        self.db            = SqliteDB( database_filename )
         self.db_seq        = self.db.get_last_resolution()
         self.catching_up   = False
         self.catchup_retry = None
@@ -216,75 +366,7 @@ class KeyValueDB (node.JSONResponder):
                         from_seq         = header['last_known_seq'],
                         key_val_seq_list = l )
 
-        
-class KeyValNode (node.BasicNode):
-    '''
-    This class implements the Paxos logic for KeyValueDB. It extends
-    node.BasicNode in two significant ways. First, it embeds within
-    each heartbeat message the current multi-paxos sequence number. This
-    allows late-joining/recovering nodes to quickly discover that their
-    databases are out of sync and begin the catchup process. Second,
-    this node drops all Paxos messages while the database is catching
-    up. This prevents newly chosen values from entering the database
-    prior to the completion of the catchup process. 
-    '''
-
-    def __init__(self,
-                 kvdb,
-                 node_uid,
-                 durable_dir,
-                 object_id):
-
-        super(KeyValNode,self).__init__(node_uid, durable_dir, object_id)
-        
-        self.kvdb = kvdb
 
         
-            
-    def getHeartbeatData(self):
-        return dict( seq_num = self.currentInstanceNum() )
-    
-    
-    def onHeartbeat(self, data):
-        if data['seq_num'] - 1 > self.kvdb.getMaxDBSequenceNumber():
-            if data['seq_num'] > self.currentInstanceNum():
-                self.slewSequenceNumber( data['seq_num'] )
-
-            self.kvdb.catchup()
-
-
-    # Override the sequence checking function in the baseclass to cause all
-    # packets to be dropped from our Paxos implementation while our database
-    # is behind
-    def _check_sequence(self, header):
-        return super(KeyValNode,self)._check_sequence(header) and not self.kvdb.isCatchingUp()
-
-    
-    def onLeadershipAcquired(self):
-        print self.node_uid, 'I have the leader!'
-
-
-    def onLeadershipLost(self):
-        print self.node_uid, 'I LOST the leader!'
-
-
-    def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
-        print '*** Change of guard: ', prev_leader_uid, new_leader_uid
-
-
-    def onBehindInSequence(self):
-        self.kvdb.catchup()
 
         
-    def onProposalResolution(self, instance_num, value):
-        # This method is only called when our database is current
-        
-        print '*** Resolution! ', instance_num, repr(value)
-
-        #print '** DECODED: ', json.loads(value)
-
-        key, value = json.loads(value)
-
-        self.kvdb.onValueSet( key, value, instance_num )
-        
-            
