@@ -23,10 +23,14 @@ snode = None
 
 nodes = list()
 
-for i in ids.itervalues():
+for uid, i in ids.iteritems():
     pax_rep = 'tcp://127.0.0.1:222{}'.format(i)
     pax_pub = 'tcp://127.0.0.1:333{}'.format(i)
-    nodes.append( dict(uid=pax_pub, pub_addr=pax_pub, rep_addr=pax_rep) )
+    kv_rep  = 'tcp://127.0.0.1:444{}'.format(i)
+    nodes.append( dict(uid          = uid,
+                       pax_pub_addr = pax_pub,
+                       pax_rep_addr = pax_rep,
+                       kv_rep_addr  = kv_rep) )
 
 cfg = dict( nodes=nodes )
 
@@ -35,18 +39,15 @@ def doit():
     global snode
     
     i = sys.argv[1]
-    lcl_pax_rep = 'tcp://127.0.0.1:222{}'.format(ids[i])
-    lcl_pax_pub = 'tcp://127.0.0.1:333{}'.format(ids[i])
-    lcl_rep     = 'tcp://127.0.0.1:444{}'.format(ids[i])
-    del ids[i]
-    pax_pubs = [ 'tcp://127.0.0.1:333{}'.format(x) for x in ids.values() ]
-    reps     = [ 'tcp://127.0.0.1:444{}'.format(x) for x in ids.values() ]
 
-    snode = keyval.KeyValueDB( lcl_pax_pub, lcl_rep, reps,
-                               '/tmp', ':memory:' )
+    if not i in ids:
+        print 'Invalid node uid: ', i
+        sys.exit(0)
+
+    snode = keyval.KeyValueDB( i, '/tmp', ':memory:' )
 
     snode.initialize( json.dumps(cfg) )
-    #snode.connect( pax_pubs )
+
             
 reactor.callWhenRunning(doit)
 reactor.run()

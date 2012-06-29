@@ -78,6 +78,11 @@ class BasicHeartbeatProposer (heartbeat.Proposer):
                                                      quorum_size,
                                                      leader_uid = leader_uid)
 
+    def __getstate__(self):
+        d = dict(self.__dict__)
+        del d['node']
+        return d
+
     def send_prepare(self, proposal_id):
         self.node._paxos_send_prepare(proposal_id)
 
@@ -190,9 +195,12 @@ class BasicNode (JSONResponder):
         self.pax_pub          = None
         self.pax_sub          = None
 
-        self.mpax                  = BasicMultiPaxos(durable_dir, object_id)
-        self.mpax.node_factory     = self._node_factory
-        self.mpax.on_resolution_cb = self._on_proposal_resolution
+        self.mpax                    = BasicMultiPaxos(durable_dir, object_id)
+        self.mpax.node_factory       = self._node_factory
+        self.mpax.on_resolution_cb   = self._on_proposal_resolution
+        
+        if self.mpax.node:
+            self.mpax.node.proposer.node = self
 
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
@@ -539,7 +547,7 @@ class BasicNode (JSONResponder):
             return # Ignore this if shutdown() has been called
 
         self._connect_req( new_leader_uid )
-        
+
         self.onLeadershipChanged(prev_leader_uid, new_leader_uid)
 
         

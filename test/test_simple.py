@@ -30,8 +30,6 @@ class TestHBP (node.BasicHeartbeatProposer):
 
     
 class TestKV (simple.SimpleNode):
-    CATCHUP_RETRY_DELAY  = 0.2
-    CATCHUP_NUM_ITEMS    = 2
 
     hb_proposer_klass = TestHBP
 

@@ -99,6 +99,8 @@ class KeyValNode (node.BasicNode):
     prior to the completion of the catchup process. 
     '''
 
+    chatty = False
+
     def __init__(self,
                  kvdb,
                  node_uid,
@@ -109,8 +111,7 @@ class KeyValNode (node.BasicNode):
         
         self.kvdb = kvdb
 
-        
-            
+
     def getHeartbeatData(self):
         return dict( seq_num = self.currentInstanceNum() )
     
@@ -126,10 +127,13 @@ class KeyValNode (node.BasicNode):
     # Override the sequence checking function in the baseclass to cause all
     # packets to be dropped from our Paxos implementation while our database
     # is behind
-    def _check_sequence(self, header):
-        return super(KeyValNode,self)._check_sequence(header) and not self.kvdb.isCatchingUp()
+    def checkSequence(self, header):
+        return super(KeyValNode,self).checkSequence(header) and not self.kvdb.isCatchingUp()
 
-    
+
+    #def onShutdown(self):
+    #    print self.node_uid, 'Shutdown!'
+        
     def onLeadershipAcquired(self):
         print self.node_uid, 'I have the leader!'
 
@@ -138,8 +142,8 @@ class KeyValNode (node.BasicNode):
         print self.node_uid, 'I LOST the leader!'
 
 
-    def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
-        print '*** Change of guard: ', prev_leader_uid, new_leader_uid
+    #def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
+    #    print '*** Change of guard: ', prev_leader_uid, new_leader_uid
 
 
     def onBehindInSequence(self):
@@ -148,8 +152,8 @@ class KeyValNode (node.BasicNode):
         
     def onProposalResolution(self, instance_num, value):
         # This method is only called when our database is current
-        
-        print '*** Resolution! ', instance_num, repr(value)
+        if self.chatty:
+            print '*** Resolution! ', instance_num, repr(value)
 
         #print '** DECODED: ', json.loads(value)
 
@@ -174,9 +178,11 @@ class KeyValueDB (node.JSONResponder):
     than it's most recent database entry, it knows that it is consistent
     with it's peers and will begin participating in Paxos instance resolutions.
     '''
+
+    _node_klass = KeyValNode
+    chatty = None
+    
     def __init__(self, node_uid,
-                 local_rep_addr,
-                 remote_rep_addrs,
                  database_dir,
                  database_filename=None,
                  catchup_retry_delay=2.0,
@@ -191,8 +197,9 @@ class KeyValueDB (node.JSONResponder):
         else:
             durable_dir = database_dir
             durable_id  = os.path.basename(database_filename + '.paxos')
-            
-        self.kv_node = KeyValNode(self, node_uid, durable_dir, durable_id)
+
+        self.node_uid = node_uid
+        self.kv_node = self._node_klass(self, node_uid, durable_dir, durable_id)
 
         self.catchup_retry_delay = catchup_retry_delay
         self.catchup_num_items   = catchup_num_items
@@ -202,18 +209,12 @@ class KeyValueDB (node.JSONResponder):
         self.catching_up   = False
         self.catchup_retry = None
 
-        self.rep_addr      = local_rep_addr
+        self.rep_addr      = None
+        self.other_reps    = None
             
-        self.rep           = tzmq.ZmqRepSocket()
-        self.req           = tzmq.ZmqReqSocket()
+        self.rep           = None
+        self.req           = None
 
-        self.rep.messageReceived = self._generateResponder( '_REP_' )
-        self.req.messageReceived = self._generateResponder( '_REQ_' )
-        
-        self.rep.bind(self.rep_addr)
-
-        for x in remote_rep_addrs:
-            self.req.connect(x)
 
 
     def _loadConfiguration(self, cfg_str=None):
@@ -223,9 +224,35 @@ class KeyValueDB (node.JSONResponder):
         cfg = json.loads(cfg_str)
 
         zpax_nodes = dict()
+        kv_reps    = set()
+        my_addr    = None
 
         for n in cfg['nodes']:
-            zpax_nodes[ n['uid'] ] = (n['rep_addr'], n['pub_addr'])
+            zpax_nodes[ n['uid'] ] = (n['pax_rep_addr'], n['pax_pub_addr'])
+            
+            if self.kv_node.node_uid == n['uid']:
+                my_addr = n['kv_rep_addr']
+            else:
+                kv_reps.add( n['kv_rep_addr'] )
+
+        if my_addr is None:
+            raise Exception('Configuration is missing configuration for this node')
+
+        if self.rep_addr is None or self.rep_addr != my_addr:
+            self.rep_addr = my_addr
+            if self.rep is not None:
+                self.rep.close()
+            self.rep = tzmq.ZmqRepSocket()
+            self.rep.bind(self.rep_addr)
+            self.rep.messageReceived = self._generateResponder( '_REP_' )
+
+        if self.other_reps is None or not self.other_reps == kv_reps:
+            self.other_reps = kv_reps
+            self.req = tzmq.ZmqReqSocket()
+            self.req.messageReceived = self._generateResponder( '_REQ_' )
+        
+            for x in kv_reps:
+                self.req.connect(x)
 
         if 'quorum_size' in cfg:
             quorum_size = cfg['quorum_size']
@@ -237,7 +264,7 @@ class KeyValueDB (node.JSONResponder):
 
         elif self.kv_node.quorum_size != quorum_size:
             self.kv_node.changeQuorumSize( quorum_size )
-            
+
         self.kv_node.connect( zpax_nodes )
 
 
@@ -332,7 +359,8 @@ class KeyValueDB (node.JSONResponder):
 
         
     def _REP_propose_value(self, header):
-        print 'Proposing ', header
+        if self.chatty:
+            print 'Proposing ', header
         try:
             #if header['key'] == _ZPAX_CONFIG_KEY:
             #    raise Exception('Access Denied')
@@ -345,12 +373,12 @@ class KeyValueDB (node.JSONResponder):
 
             
     def _REP_query_value(self, header):
-        print 'Querying ', header
+        if self.chatty:
+            print 'Querying ', header
         if header['key'] == _ZPAX_CONFIG_KEY:
             #self.rep_reply(error='Access Denied')
             self.rep_reply( value = self.db.get_value(header['key']) )
         else:
-            print 'DB RESULT: ', self.db.get_value(header['key'])
             self.rep_reply( value = self.db.get_value(header['key']) )
 
 
