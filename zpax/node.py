@@ -181,19 +181,20 @@ class BasicNode (JSONResponder):
 
     def __init__(self, node_uid, durable_dir=None, object_id=None):
 
-        self.node_uid         = node_uid
-        self.accept_retry     = None
-        self.delayed_prepare  = None
+        self.node_uid           = node_uid
+        self.accept_retry       = None
+        self.delayed_prepare    = None
 
-        self.current_proposal = None
-        self.proposal_retry   = None
+        self.current_leader_uid = None
+        self.current_proposal   = None
+        self.proposal_retry     = None
 
-        self.zpax_nodes       = None # Dictionary of node_uid -> (rep_addr, pub_addr)
+        self.zpax_nodes         = None # Dictionary of node_uid -> (rep_addr, pub_addr)
 
-        self.pax_rep          = None
-        self.pax_req          = None # Assigned on leadership change
-        self.pax_pub          = None
-        self.pax_sub          = None
+        self.pax_rep            = None
+        self.pax_req            = None # Assigned on leadership change
+        self.pax_pub            = None
+        self.pax_sub            = None
 
         self.mpax                    = BasicMultiPaxos(durable_dir, object_id)
         self.mpax.node_factory       = self._node_factory
@@ -475,14 +476,19 @@ class BasicNode (JSONResponder):
             self._try_propose()
 
             
-    def _try_propose(self):
+    def _try_propose(self, retry=False):
         if self.current_proposal:
             if self.proposal_retry and self.proposal_retry.active():
                 self.proposal_retry.cancel()
 
             retry_delay = self.mpax.node.proposer.hb_period
             
-            self.proposal_retry = reactor.callLater(retry_delay, self._try_propose)
+            self.proposal_retry = reactor.callLater(retry_delay, self._try_propose, True)
+
+            if retry:
+                # The server could have died while attempting to process our request
+                # this breaks the Req/Rep pattern so we need to recreate the socket
+                self._connect_req()
 
             if self.pax_req:
                 self.pax_req.send( self.current_proposal )
@@ -497,17 +503,17 @@ class BasicNode (JSONResponder):
         self.proposal_retry   = None
 
 
-    def _connect_req(self, new_leader_uid):
+    def _connect_req(self):
         if self.pax_req is not None:
             self.pax_req.close()
             self.pax_req = None
 
-        if new_leader_uid is not None:
+        if self.current_leader_uid is not None:
             self.pax_req = tzmq.ZmqReqSocket()
 
             self.pax_req.messageReceived = self._generateResponder('_REQ_')
         
-            self.pax_req.connect( self.zpax_nodes[new_leader_uid][0] )
+            self.pax_req.connect( self.zpax_nodes[self.current_leader_uid][0] )
 
             self._try_propose()
         
@@ -546,7 +552,8 @@ class BasicNode (JSONResponder):
         if self.pax_rep is None:
             return # Ignore this if shutdown() has been called
 
-        self._connect_req( new_leader_uid )
+        self.current_leader_uid = new_leader_uid
+        self._connect_req()
 
         self.onLeadershipChanged(prev_leader_uid, new_leader_uid)
 

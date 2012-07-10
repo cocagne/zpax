@@ -80,13 +80,10 @@ class KeyValueDBTester(unittest.TestCase):
         self.dlost       = None
         self.clients     = list()
         self.all_nodes   = 'a b c'.split()
+
         
-        self.json_config = None
-
-        self.gen_json_config()
-
-
-    def gen_json_config(self):
+    @property
+    def json_config(self):
         nodes = list()
         
         for uid in self.all_nodes:
@@ -98,7 +95,7 @@ class KeyValueDBTester(unittest.TestCase):
                                pax_rep_addr = pax_rep,
                                kv_rep_addr  = kv_rep) )
             
-        self.json_config = json.dumps( dict( nodes = nodes ) )
+        return json.dumps( dict( nodes = nodes ) )
             
         
     def tearDown(self):
@@ -123,7 +120,7 @@ class KeyValueDBTester(unittest.TestCase):
         return zreq
             
 
-    def start(self,  node_names, chatty=False, hmac_key=None, value_key=None):
+    def start(self,  node_names, chatty=False, hmac_key=None, value_key=None, caughtup=None):
 
         def gen_cb(x, func):
             def cb():
@@ -131,8 +128,7 @@ class KeyValueDBTester(unittest.TestCase):
             return cb
 
         zpax_nodes = dict()
-
-                    
+        
         for node_name in node_names.split():
             if not node_name in self.all_nodes or node_name in self.nodes:
                 continue
@@ -145,18 +141,22 @@ class KeyValueDBTester(unittest.TestCase):
             if value_key:
                 n.kv_node.value_key = value_key
 
-            if not n.isInitialized():
-                n.initialize( self.json_config )
-
             n.kv_node.onLeadershipAcquired = gen_cb(node_name, self._on_leader_acq)
             n.kv_node.onLeadershipLost     = gen_cb(node_name, self._on_leader_lost)
 
             n.name = node_name
+
+            if caughtup:
+                n.onCaughtUp = caughtup
             
             if chatty:
                 n.kv_node.chatty = True
                 
             self.nodes[node_name] = n
+
+            if not n.isInitialized():
+                n.initialize( self.json_config )
+
 
         
     def stop(self, node_names):
@@ -178,6 +178,16 @@ class KeyValueDBTester(unittest.TestCase):
         if self.dlost:
             d, self.dlost = self.dlost, None
             d.callback(node_id)
+
+    @defer.inlineCallbacks
+    def set_key(self, client, key, value):
+        yield client.propose(key,value)
+        
+        v = None
+        while v != value:
+            yield delay(0.05)
+            r = yield client.query(key)
+            v = r['value']
 
 
 
@@ -204,25 +214,161 @@ class KeyValueDBTester(unittest.TestCase):
             r = yield c.query('foo')
             keyval = r['value']
 
+
     @defer.inlineCallbacks
-    def test_dynamic_add_node(self):
-        pass
+    def test_set_keys(self):
+        self.start('a b')
+
+        d = defer.Deferred()
+        c = self.new_client('a')
+
+        yield self.dleader
+
+        yield self.set_key(c, 'foo0', 'bar')
+        yield self.set_key(c, 'foo1', 'bar')
+        yield self.set_key(c, 'foo2', 'bar')
+        yield self.set_key(c, 'foo3', 'bar')
+        yield self.set_key(c, 'foo4', 'bar')
+        yield self.set_key(c, 'foo5', 'bar')
+        yield self.set_key(c, 'foo6', 'bar')
+        yield self.set_key(c, 'foo7', 'bar')
+        yield self.set_key(c, 'foo8', 'bar')
+        yield self.set_key(c, 'foo9', 'bar')
+
+        yield self.set_key(c, 'foo0', 'baz')
+        yield self.set_key(c, 'foo1', 'baz')
+        yield self.set_key(c, 'foo2', 'baz')
+        yield self.set_key(c, 'foo3', 'baz')
+        yield self.set_key(c, 'foo4', 'baz')
+        yield self.set_key(c, 'foo5', 'baz')
+        yield self.set_key(c, 'foo6', 'baz')
+        yield self.set_key(c, 'foo7', 'baz')
+        yield self.set_key(c, 'foo8', 'baz')
+        yield self.set_key(c, 'foo9', 'baz')
+
+    
+
+    @defer.inlineCallbacks
+    def xtest_zmq_req_down_rep_node(self):
+        #self.all_nodes.append('d')
+        self.start('a  b')
+
+        d = defer.Deferred()
+        c = self.new_client('a')
+
+        yield self.dleader
+
+        yield self.set_key(c, 'foo', 'bar')
+        
+        # Add a node to config
+        self.all_nodes.append('d')
+        
+        yield self.set_key(c, keyval._ZPAX_CONFIG_KEY, self.json_config)
+        
+        # Quorum is now 3. No changes can be made until 3 functioning nodes
+        # are up. Start the newly added node to reach a total of three then
+        # set a key
+        dcaughtup = defer.Deferred()
+        self.start('d', caughtup = lambda : dcaughtup.callback(None))
+        self.nodes['d'].chatty = True
+
+        yield dcaughtup
+
+        print 'Trying to set key with quorum 3'
+        yield self.set_key(c, 'test_key', 'foo')
+
+        print 'Done!!!'
+
+        
+    @defer.inlineCallbacks
+    def test_dynamic_add_node(self, chatty=False):
+
+        self.start('a c', chatty=chatty)
+
+        d = defer.Deferred()
+        c = self.new_client('a')
+
+        yield self.dleader
+
+        yield self.set_key(c, 'foo', 'bar')
+        
+        # Add a node to config
+        self.all_nodes.append('d')
+        
+        yield self.set_key(c, keyval._ZPAX_CONFIG_KEY, self.json_config)
+
+        # Quorum is now 3. No changes can be made until 3 functioning nodes
+        # are up. Start the newly added node to reach a total of three then
+        # set a key
+
+        dcaughtup = defer.Deferred()
+
+        self.start('d', caughtup = lambda : dcaughtup.callback(None))
+
+        yield dcaughtup
+
+        # Trying to set key with quorum 3
+        yield self.set_key(c, 'test_key', 'foo')
+        yield self.set_key(c, 'test_key2', 'foo')
+        defer.returnValue(c)
+        
 
     @defer.inlineCallbacks
     def test_dynamic_remove_node(self):
-        pass
+        c = yield self.test_dynamic_add_node()
+
+        #yield self.set_key(c, 'test_key2', 'foo')
+        print 'Node added', self.json_config
+        self.all_nodes.remove('c')
+        print '*********'
+        print self.json_config
+
+        print  'Setting removed config'
+
+        yield self.set_key(c, 'test_key3', 'foo')
+        
+        yield self.set_key(c, keyval._ZPAX_CONFIG_KEY, self.json_config)
+
+        self.stop('c')
+
+        print 'Trying with quorum 2'
+        # Trying to set key with quorum 2
+        yield self.set_key(c, 'test_remove', 'foo')
+
+        print 'REMOVE COMPLETE'
+        
 
     @defer.inlineCallbacks
     def test_node_recovery(self):
-        pass
+        self.start('a b')
+
+        d = defer.Deferred()
+        c = self.new_client('a')
+
+        yield self.dleader
+
+        yield self.set_key(c, 'foo', 'bar')
+        yield self.set_key(c, 'baz', 'bish')
+        yield self.set_key(c, 'william', 'wallace')
+
+        dcaughtup = defer.Deferred()
+        
+        self.start('c', caughtup = lambda : dcaughtup.callback(None))
+
+        yield dcaughtup
+
+        c2 = self.new_client('c')
+
+        r = yield c2.query('william')
+        self.assertEquals(r['value'], 'wallace')
             
-            
 
 
 
 
 
-class SqliteDBTest(unittest.TestCase):
+#class SqliteDBTest(unittest.TestCase):
+class Foo:
 
     def setUp(self):
         self.db = keyval.SqliteDB(':memory:')

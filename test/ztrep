@@ -1,0 +1,40 @@
+#!/usr/bin/python
+
+import sys
+import os.path
+
+pd = os.path.dirname
+
+this_dir = pd(os.path.abspath(__file__))
+
+sys.path.append( pd(this_dir) )
+sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
+
+
+from twisted.internet import reactor, defer
+
+from zpax import tzmq
+
+def tz():
+
+
+    def doit():
+        s = tzmq.ZmqRepSocket()
+
+        s.bind('tcp://*:3331')
+        
+        o = type('foo', (object,), {})()
+        o.count = 0
+
+        def send( parts ):
+            o.count += 1
+            print 'Got: ', o.count, parts
+            s.send('foo {}'.format(o.count), 'part2', str(o.count))
+
+        s.messageReceived = send
+
+    reactor.callWhenRunning(doit)
+    reactor.run()
+
+
+tz()

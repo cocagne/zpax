@@ -126,4 +126,3 @@ class SimpleTest(unittest.TestCase):
         return d
 
 
-    

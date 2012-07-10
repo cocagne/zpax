@@ -19,6 +19,9 @@ value    text,
 resolution integer
 '''
 
+class MissingConfiguration (Exception):
+    pass
+
 class SqliteDB (object):
 
     def __init__(self, fn):
@@ -117,6 +120,9 @@ class KeyValNode (node.BasicNode):
     
     
     def onHeartbeat(self, data):
+        #if self.node_uid in 'd':
+        #    print 'Heartbeat Received', self.node_uid, data['seq_num'] - 1, self.kvdb.getMaxDBSequenceNumber()
+            
         if data['seq_num'] - 1 > self.kvdb.getMaxDBSequenceNumber():
             if data['seq_num'] > self.currentInstanceNum():
                 self.slewSequenceNumber( data['seq_num'] )
@@ -213,9 +219,11 @@ class KeyValueDB (node.JSONResponder):
         self.other_reps    = None
             
         self.rep           = None
-        self.req           = None
+        self.dlr           = None
 
 
+    def onCaughtUp(self):
+        pass
 
     def _loadConfiguration(self, cfg_str=None):
         if cfg_str is None:
@@ -236,33 +244,41 @@ class KeyValueDB (node.JSONResponder):
                 kv_reps.add( n['kv_rep_addr'] )
 
         if my_addr is None:
-            raise Exception('Configuration is missing configuration for this node')
+            raise MissingConfiguration('Configuration is missing configuration for this node')
 
         if self.rep_addr is None or self.rep_addr != my_addr:
             self.rep_addr = my_addr
             if self.rep is not None:
                 self.rep.close()
+            #print '****** REP CREATED: ', self.node_uid, self.rep_addr
             self.rep = tzmq.ZmqRepSocket()
             self.rep.bind(self.rep_addr)
             self.rep.messageReceived = self._generateResponder( '_REP_' )
 
         if self.other_reps is None or not self.other_reps == kv_reps:
             self.other_reps = kv_reps
-            self.req = tzmq.ZmqReqSocket()
-            self.req.messageReceived = self._generateResponder( '_REQ_' )
-        
+            if self.dlr is not None:
+                self.dlr.close()
+            self.dlr = tzmq.ZmqDealerSocket()
+            self.dlr.messageReceived = self._generateResponder( '_DLR_',
+                                                                lambda x : x[1:])
+
+            #print 'REQ ', self.node_uid
             for x in kv_reps:
-                self.req.connect(x)
+                self.dlr.connect(x)
+                #print '     Connecting to: ', x
 
         if 'quorum_size' in cfg:
             quorum_size = cfg['quorum_size']
         else:
             quorum_size = len(cfg['nodes'])/2 + 1
-                
+
+        print 'QUORUM_SIZE:', self.node_uid, self.kv_node.quorum_size, quorum_size
         if not self.kv_node.is_initialized():
             self.kv_node.initialize( quorum_size )
 
         elif self.kv_node.quorum_size != quorum_size:
+            print '      CHANGING!'
             self.kv_node.changeQuorumSize( quorum_size )
 
         self.kv_node.connect( zpax_nodes )
@@ -281,7 +297,7 @@ class KeyValueDB (node.JSONResponder):
 
                 
     def shutdown(self):
-        self.req.close()
+        self.dlr.close()
         self.rep.close()
         if self.catchup_retry and self.catchup_retry.active():
             self.catchup_retry.cancel()
@@ -297,6 +313,7 @@ class KeyValueDB (node.JSONResponder):
 
 
     def onValueSet(self, key, value, instance_num):
+        print 'VALUE SET!', self.node_uid, key
         if key == _ZPAX_CONFIG_KEY:
             self._loadConfiguration( value )
         self.db.update_key( key, value, instance_num )        
@@ -311,28 +328,40 @@ class KeyValueDB (node.JSONResponder):
 
         
     def _catchup(self):
-        print '_catchup(): ',
+        if self.chatty:
+            print '_catchup(): ',
         self.catching_up = self.db_seq != self.kv_node.currentInstanceNum() - 1
         
         if not self.catching_up:
-            print '*** CAUGHT UP!! ***'
+            self.onCaughtUp()
+            if self.chatty:
+                print '*** CAUGHT UP!! ***'
             return
-        
-        print 'Requesting next batch from ', self.db_seq
+
+        if self.chatty:
+            print 'Requesting next batch from ', self.db_seq
 
         self.catchup_retry = reactor.callLater(self.catchup_retry_delay,
                                                self._catchup)
 
-        self.req.send( json.dumps( dict(type='catchup_request', last_known_seq=self.db_seq) ) )
+        try:
+            self.dlr.send( '', json.dumps( dict(type='catchup_request', last_known_seq=self.db_seq) ) )
+        except Exception, e:
+            print 'EXCEPT! ', str(e)
 
         
     #--------------------------------------------------------------------------
     # REQ Socket
     #
-    def _REQ_catchup_data(self, msg):
-        print 'CATCHUP MSG: ', msg
-        print 'Catchup Data({},{}): '.format(msg['from_seq'], self.db_seq),
-        print ', '.join( '({}{}{})'.format(*t) for t in msg['key_val_seq_list'] )
+    def _DLR_catchup_data(self, msg):
+        if self.db_seq != msg['from_seq']:
+            # Reply to an old request. Ignore it.
+            return
+            
+        if False:#self.chatty:
+            print 'CATCHUP MSG: ', msg
+            print 'Catchup Data({},{}): '.format(msg['from_seq'], self.db_seq),
+            print ', '.join( '({}{}{})'.format(*t) for t in msg['key_val_seq_list'] )
         
         if self.catchup_retry and self.catchup_retry.active():
             self.catchup_retry.cancel()
@@ -342,12 +371,17 @@ class KeyValueDB (node.JSONResponder):
             for key, val, seq_num in msg['key_val_seq_list']:
                 # XXX Convert to updating all keys in one commit
                 if key == _ZPAX_CONFIG_KEY:
-                    self._loadConfiguration(val)
+                    try:
+                        self._loadConfiguration(val)
+                    except MissingConfiguration:
+                        # We've been removed from the loop :(
+                        pass
                 self.db.update_key(key, val, seq_num)
                 
             self.db_seq = self.db.get_last_resolution()
 
-            print 'LAST RESOLUTION: ', self.db.get_last_resolution()
+            if self.chatty:
+                print 'LAST RESOLUTION: ', self.db.get_last_resolution()
                     
         self._catchup()
 
