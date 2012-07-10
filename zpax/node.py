@@ -189,6 +189,9 @@ class BasicNode (JSONResponder):
         self.current_proposal   = None
         self.proposal_retry     = None
 
+        self.last_value         = None
+        self.last_seq_num       = None
+
         self.zpax_nodes         = None # Dictionary of node_uid -> (rep_addr, pub_addr)
 
         self.pax_rep            = None
@@ -278,6 +281,8 @@ class BasicNode (JSONResponder):
         if self.mpax.quorum_size is not None and not self.heartbeat_poller.running:
             self.heartbeat_poller.start( self.hb_proposer_klass.liveness_window )
 
+        self.zpax_nodes = zpax_nodes
+
 
     def _check_hmac(self, msg_parts):
         if self.hmac_key:
@@ -360,7 +365,7 @@ class BasicNode (JSONResponder):
         self._cancel_proposal()
         
         if self.mpax.node.proposer.leader:
-            self.paxos_on_leadership_lost()
+            self._paxos_on_leadership_lost()
             
         self.mpax.set_instance_number(new_sequence_number)
 
@@ -381,13 +386,15 @@ class BasicNode (JSONResponder):
         self._set_proposal(value)
 
 
-    def publish(self, message_type, *parts):
+    def publish(self, message_type, *parts, **kwargs):
         if not parts:
             parts = [{}]
+
+        seq_num = self.sequence_number if not 'sequence_number' in kwargs else kwargs['sequence_number']
             
         parts[0]['type'    ] = message_type
         parts[0]['node_uid'] = self.node_uid
-        parts[0]['seq_num' ] = self.sequence_number
+        parts[0]['seq_num' ] = seq_num
         
         msg_stack = [ 'zpax' ]
 
@@ -504,11 +511,12 @@ class BasicNode (JSONResponder):
 
 
     def _connect_req(self):
+        #print 'CONNECT REQ: ', self.node_uid, self.current_leader_uid, self.current_leader_uid in self.zpax_nodes
         if self.pax_req is not None:
             self.pax_req.close()
             self.pax_req = None
 
-        if self.current_leader_uid is not None:
+        if self.current_leader_uid is not None and self.current_leader_uid in self.zpax_nodes:
             self.pax_req = tzmq.ZmqReqSocket()
 
             self.pax_req.messageReceived = self._generateResponder('_REQ_')
@@ -588,7 +596,11 @@ class BasicNode (JSONResponder):
             
 
     def _SUB_paxos_accept(self, header, pax):
-        #print 'Got Accept(%s)!' % self.node_uid[-5], (self.sequence_number, header['seq_num']), header['node_uid'][-5], pax[0],
+        #print 'Got Accept(%s)!' % self.node_uid, (self.sequence_number, header['seq_num']), header['node_uid'], pax[0]
+        if header['seq_num'] == self.last_seq_num:
+            self.publish( 'value_accepted', dict(value=self.last_value), sequence_number=self.last_seq_num)
+            return
+        
         if self.checkSequence(header):
             r = self.mpax.recv_accept_request(header['seq_num'],
                                               tuple(pax[0]),
@@ -598,10 +610,10 @@ class BasicNode (JSONResponder):
             else:
                 self.publish( 'paxos_accepted_nack', dict( proposal_id = tuple(pax[0]),
                                                            new_proposal_id = self.mpax.node.acceptor.promised_id) )
-
+        
 
     def _SUB_paxos_accepted(self, header, pax):
-        #print 'Got accepted', header, pax
+        #print 'Got accepted(%s)' % self.node_uid, (self.sequence_number, header['seq_num']), header['node_uid']#, pax[0]
         if self.checkSequence(header):
             self.mpax.recv_accepted(header['seq_num'], header['node_uid'],
                                     tuple(pax[0]), pax[1])
@@ -612,6 +624,16 @@ class BasicNode (JSONResponder):
             self.mpax.node.proposer.recv_accept_nack( header['node_uid'],
                                                       tuple(header['proposal_id']),
                                                       tuple(header['new_proposal_id']) )
+
+
+    def _SUB_value_accepted(self, header):
+        #print 'RECV VAL ACCEPTED: ', self.node_uid
+        if self.checkSequence(header):
+            #print '      TIS GOOD', header['value']
+            self.slewSequenceNumber(self.sequence_number + 1)
+            self._on_proposal_resolution(header['seq_num'], header['value'])
+            
+            
         
 
     def _paxos_send_prepare(self, proposal_id):
@@ -662,7 +684,7 @@ class BasicNode (JSONResponder):
     # Reply Messaging 
     #   
     def _REP_propose_value(self, header):
-        #print 'Proposal made. Seq = ', self.sequence_number, 'Req: ', header
+        #print 'Proposal made (%s)'% self.node_uid, 'Seq = ', self.sequence_number, 'Req: ', header
         if header['seq_num'] == self.sequence_number:
             if self.mpax.node.acceptor.accepted_value is None:
                 value = header['value']
@@ -678,6 +700,9 @@ class BasicNode (JSONResponder):
     # Paxos Proposal Resolution 
     #
     def _on_proposal_resolution(self, instance_num, value):
+        self.last_seq_num = instance_num
+        self.last_value   = value
+        
         self._cancel_proposal()
         
         if self.accept_retry is not None:

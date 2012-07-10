@@ -273,12 +273,12 @@ class KeyValueDB (node.JSONResponder):
         else:
             quorum_size = len(cfg['nodes'])/2 + 1
 
-        print 'QUORUM_SIZE:', self.node_uid, self.kv_node.quorum_size, quorum_size
+        #print 'QUORUM_SIZE:', self.node_uid, self.kv_node.quorum_size, quorum_size
         if not self.kv_node.is_initialized():
             self.kv_node.initialize( quorum_size )
 
         elif self.kv_node.quorum_size != quorum_size:
-            print '      CHANGING!'
+            #print '      CHANGING!'
             self.kv_node.changeQuorumSize( quorum_size )
 
         self.kv_node.connect( zpax_nodes )
@@ -313,9 +313,12 @@ class KeyValueDB (node.JSONResponder):
 
 
     def onValueSet(self, key, value, instance_num):
-        print 'VALUE SET!', self.node_uid, key
+        #print 'VALUE SET!', self.node_uid, key
         if key == _ZPAX_CONFIG_KEY:
-            self._loadConfiguration( value )
+            try:
+                self._loadConfiguration( value )
+            except MissingConfiguration:
+                pass # We've been removed from the inner circle :(
         self.db.update_key( key, value, instance_num )        
         self.db_seq = instance_num
 
@@ -402,7 +405,7 @@ class KeyValueDB (node.JSONResponder):
             self.kv_node.proposeValue(jstr)
             self.rep_reply( proposed = True )
         except node.ProposalFailed, e:
-            print 'Proposal FAILED: ', str(e)
+            #print 'Proposal FAILED: ', str(e)
             self.rep_reply(proposed=False, message=str(e))
 
             

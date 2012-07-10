@@ -181,13 +181,14 @@ class KeyValueDBTester(unittest.TestCase):
 
     @defer.inlineCallbacks
     def set_key(self, client, key, value):
-        yield client.propose(key,value)
         
         v = None
         while v != value:
-            yield delay(0.05)
+            yield client.propose(key,value)
+            yield delay(0.1)
             r = yield client.query(key)
             v = r['value']
+            #print 'set_key', key, value, v, v != value
 
 
 
@@ -294,6 +295,8 @@ class KeyValueDBTester(unittest.TestCase):
         
         # Add a node to config
         self.all_nodes.append('d')
+
+        #print '*'*30
         
         yield self.set_key(c, keyval._ZPAX_CONFIG_KEY, self.json_config)
 
@@ -301,11 +304,17 @@ class KeyValueDBTester(unittest.TestCase):
         # are up. Start the newly added node to reach a total of three then
         # set a key
 
+        #print '*'*30
+        
         dcaughtup = defer.Deferred()
 
         self.start('d', caughtup = lambda : dcaughtup.callback(None))
 
         yield dcaughtup
+
+        #yield delay(1)
+
+        #print '*'*30
 
         # Trying to set key with quorum 3
         yield self.set_key(c, 'test_key', 'foo')
@@ -318,12 +327,12 @@ class KeyValueDBTester(unittest.TestCase):
         c = yield self.test_dynamic_add_node()
 
         #yield self.set_key(c, 'test_key2', 'foo')
-        print 'Node added', self.json_config
+        #print 'Node added', self.json_config
         self.all_nodes.remove('c')
-        print '*********'
-        print self.json_config
+        #print '*********'
+        #print self.json_config
 
-        print  'Setting removed config'
+        #print  'Setting removed config'
 
         yield self.set_key(c, 'test_key3', 'foo')
         
@@ -331,11 +340,11 @@ class KeyValueDBTester(unittest.TestCase):
 
         self.stop('c')
 
-        print 'Trying with quorum 2'
+        #print 'Trying with quorum 2'
         # Trying to set key with quorum 2
         yield self.set_key(c, 'test_remove', 'foo')
 
-        print 'REMOVE COMPLETE'
+        #print 'REMOVE COMPLETE'
         
 
     @defer.inlineCallbacks
