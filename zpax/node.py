@@ -159,6 +159,104 @@ class JSONResponder (object):
 
 
 
+class ProposalAdvocate (JSONResponder):
+    '''
+    This class is responsible for ensuring that the current leader is
+    aware of our proposal if we have one. Whenever leadership changes,
+    the proposal is sent to the leader.
+    '''
+
+    def __init__(self, retry_delay):
+        '''
+        retry_delay - Floating point delay in seconds between retry attempts
+        '''
+        self.retry_delay      = retry_delay
+        self.leader_rep_addr  = None
+        self.current_proposal = None
+        self.instance_number  = None
+        self.proposal_retry   = None
+        self.req              = None 
+
+        
+    def shutdown(self):
+        self._cancel_retry()
+        self._close_req()
+        
+
+    def _close_req(self):
+        if self.req is not None:
+            self.req.close()
+            self.req = None
+
+            
+    def _cancel_retry(self):
+        if self.proposal_retry and self.proposal_retry.active():
+            self.proposal_retry.cancel()
+        self.proposal_retry = None
+
+        
+    def _connect(self):
+        #print 'CONNECT REQ: ', self.node_uid, self.current_leader_uid, self.current_leader_uid in self.zpax_nodes
+        self._close_req()
+
+        if self.leader_rep_addr:
+            self.req = tzmq.ZmqReqSocket()
+
+            self.req.messageReceived = self._generateResponder('_REQ_')
+        
+            self.req.connect( self.leader_rep_addr )
+
+            
+    def cancel_proposal(self, instance_number):
+        if self.instance_number <= instance_number:
+            self._cancel_retry()
+            self.current_proposal = None
+
+
+    def leadership_changed(self, new_leader_rep_addr):
+        self.leader_rep_addr = new_leader_rep_addr
+        self._connect()
+        self._propose()
+    
+
+    def set_proposal(self, node_uid, sequence_number, value):
+        if self.current_proposal is None:
+            d = dict( type     = 'propose_value',
+                      node_uid = node_uid,
+                      seq_num  = sequence_number,
+                      value    = value)
+            
+            self.current_proposal = json.dumps(d)
+            self.instance_number  = sequence_number
+
+            self._propose()
+
+            
+    def _propose(self, retry=False):
+        if self.proposal_retry and self.proposal_retry.active():
+            self.proposal_retry.cancel()
+        self.proposal_retry = None
+        
+        if self.current_proposal and self.req is not None:
+            self.proposal_retry = reactor.callLater(self.retry_delay,
+                                                    self._propose,
+                                                    True)
+            if retry:
+                # ZeroMQ REQ sockets do not allow two send() calls in sequence.
+                # Consequently, we have to shutdown and recreate the socket for
+                # retry attempts
+                self._connect()
+
+            self.req.send( self.current_proposal )
+
+            
+    def _REQ_value_proposed(self, header):
+        if self.proposal_retry and self.proposal_retry.active():
+            self.proposal_retry.cancel()
+            self.proposal_retry = None
+
+
+            
 class BasicNode (JSONResponder):
     '''
     This class provides the basic functionality required for Multi-Paxos
@@ -185,9 +283,7 @@ class BasicNode (JSONResponder):
         self.accept_retry       = None
         self.delayed_prepare    = None
 
-        self.current_leader_uid = None
-        self.current_proposal   = None
-        self.proposal_retry     = None
+        self.proposal_advocate  = ProposalAdvocate( self.hb_proposer_klass.hb_period )
 
         self.last_value         = None
         self.last_seq_num       = None
@@ -202,9 +298,16 @@ class BasicNode (JSONResponder):
         self.mpax                    = BasicMultiPaxos(durable_dir, object_id)
         self.mpax.node_factory       = self._node_factory
         self.mpax.on_resolution_cb   = self._on_proposal_resolution
-        
+
         if self.mpax.node:
             self.mpax.node.proposer.node = self
+            
+            if self.mpax.node.proposer.value:
+                # If recovered node has a proposed value, give this to the proposal
+                # advocate
+                self.proposal_advocate.set_proposal( self.node_uid,
+                                                     self.sequence_number,
+                                                     self.mpax.node.proposer.value )
 
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
@@ -362,7 +465,7 @@ class BasicNode (JSONResponder):
     def slewSequenceNumber(self, new_sequence_number):
         assert new_sequence_number > self.sequence_number
 
-        self._cancel_proposal()
+        self.proposal_advocate.cancel_proposal( new_sequence_number - 1 )
         
         if self.mpax.node.proposer.leader:
             self._paxos_on_leadership_lost()
@@ -383,7 +486,9 @@ class BasicNode (JSONResponder):
         if self.value_key:
             value = encrypt_value( self.value_key, value )
 
-        self._set_proposal(value)
+        self.proposal_advocate.set_proposal(self.node_uid,
+                                            self.sequence_number,
+                                            value)
 
 
     def publish(self, message_type, *parts, **kwargs):
@@ -414,16 +519,13 @@ class BasicNode (JSONResponder):
 
     def shutdown(self):
         self.onShutdown()
-        self._cancel_proposal()
+        self.proposal_advocate.shutdown()
         if self.accept_retry is not None and self.accept_retry.active():
             self.accept_retry.cancel()
         if self.delayed_prepare is not None and self.delayed_prepare.active():
             self.delayed_prepare.cancel()
         self.pax_rep.close()
         self.pax_rep = None
-        if self.pax_req is not None:
-            self.pax_req.close()
-            self.pax_req = None
         self.pax_pub.close()
         self.pax_sub.close()
         if self.heartbeat_poller.running:
@@ -471,61 +573,6 @@ class BasicNode (JSONResponder):
                            resolution_callback )
 
 
-    def _set_proposal(self, value):
-        if self.current_proposal is None:
-            d = dict( type     = 'propose_value',
-                      node_uid = self.node_uid,
-                      seq_num  = self.sequence_number,
-                      value    = value)
-            
-            self.current_proposal = json.dumps(d)
-
-            self._try_propose()
-
-            
-    def _try_propose(self, retry=False):
-        if self.current_proposal:
-            if self.proposal_retry and self.proposal_retry.active():
-                self.proposal_retry.cancel()
-
-            retry_delay = self.mpax.node.proposer.hb_period
-            
-            self.proposal_retry = reactor.callLater(retry_delay, self._try_propose, True)
-
-            if retry:
-                # The server could have died while attempting to process our request
-                # this breaks the Req/Rep pattern so we need to recreate the socket
-                self._connect_req()
-
-            if self.pax_req:
-                self.pax_req.send( self.current_proposal )
-        else:
-            self.proposal_retry = None
-
-            
-    def _cancel_proposal(self):
-        if self.proposal_retry and self.proposal_retry.active():
-            self.proposal_retry.cancel()
-        self.current_proposal = None
-        self.proposal_retry   = None
-
-
-    def _connect_req(self):
-        #print 'CONNECT REQ: ', self.node_uid, self.current_leader_uid, self.current_leader_uid in self.zpax_nodes
-        if self.pax_req is not None:
-            self.pax_req.close()
-            self.pax_req = None
-
-        if self.current_leader_uid is not None and self.current_leader_uid in self.zpax_nodes:
-            self.pax_req = tzmq.ZmqReqSocket()
-
-            self.pax_req.messageReceived = self._generateResponder('_REQ_')
-        
-            self.pax_req.connect( self.zpax_nodes[self.current_leader_uid][0] )
-
-            self._try_propose()
-        
-        
     #--------------------------------------------------------------------------
     # Heartbeats 
     #
@@ -560,11 +607,30 @@ class BasicNode (JSONResponder):
         if self.pax_rep is None:
             return # Ignore this if shutdown() has been called
 
-        self.current_leader_uid = new_leader_uid
-        self._connect_req()
-
+        rep_addr = self.zpax_nodes[new_leader_uid][0] if new_leader_uid is not None else None
+        
+        self.proposal_advocate.leadership_changed( rep_addr )
+        
         self.onLeadershipChanged(prev_leader_uid, new_leader_uid)
 
+
+    #--------------------------------------------------------------------------
+    # Paxos Proposal Resolution 
+    #
+    def _on_proposal_resolution(self, instance_num, value):
+        self.last_seq_num = instance_num
+        self.last_value   = value
+        
+        self.proposal_advocate.cancel_proposal( instance_num )
+        
+        if self.accept_retry is not None:
+            self.accept_retry.cancel()
+            self.accept_retry = None
+            
+        if self.value_key:
+            value = decrypt_value(self.value_key, value)
+
+        self.onProposalResolution(instance_num, value)
         
     #--------------------------------------------------------------------------
     # Paxos Messaging 
@@ -672,15 +738,6 @@ class BasicNode (JSONResponder):
 
 
     #--------------------------------------------------------------------------
-    # Request Messaging 
-    #   
-    def _REQ_value_proposed(self, header):
-        if self.proposal_retry and self.proposal_retry.active():
-            self.proposal_retry.cancel()
-            self.proposal_retry = None
-
-            
-    #--------------------------------------------------------------------------
     # Reply Messaging 
     #   
     def _REP_propose_value(self, header):
@@ -695,22 +752,3 @@ class BasicNode (JSONResponder):
                 
         self.pax_rep.send( json.dumps(dict(type='value_proposed')) )
 
-                
-    #--------------------------------------------------------------------------
-    # Paxos Proposal Resolution 
-    #
-    def _on_proposal_resolution(self, instance_num, value):
-        self.last_seq_num = instance_num
-        self.last_value   = value
-        
-        self._cancel_proposal()
-        
-        if self.accept_retry is not None:
-            self.accept_retry.cancel()
-            self.accept_retry = None
-            
-        if self.value_key:
-            value = decrypt_value(self.value_key, value)
-
-        self.onProposalResolution(instance_num, value)
-    
