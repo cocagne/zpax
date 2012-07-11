@@ -274,7 +274,7 @@ class KeyValueDB (node.JSONResponder):
             quorum_size = len(cfg['nodes'])/2 + 1
 
         #print 'QUORUM_SIZE:', self.node_uid, self.kv_node.quorum_size, quorum_size
-        if not self.kv_node.is_initialized():
+        if not self.kv_node.initialized:
             self.kv_node.initialize( quorum_size )
 
         elif self.kv_node.quorum_size != quorum_size:

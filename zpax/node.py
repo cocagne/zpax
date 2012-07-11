@@ -22,12 +22,14 @@ class ProposalFailed(Exception):
     pass
 
 
+
 class SequenceMismatch(ProposalFailed):
 
     def __init__(self, current):
         super(SequenceMismatch,self).__init__('Sequence Number Mismatch')
         self.current_seq_num = current
 
+        
         
 class ValueAlreadyProposed(ProposalFailed):
     
@@ -65,6 +67,7 @@ def decrypt_value( key, cipher_txt ):
     c = AES.new(key, AES.MODE_CBC, iv)
     
     return c.decrypt(cv).rstrip()
+
 
 
 class BasicHeartbeatProposer (heartbeat.Proposer):
@@ -319,14 +322,11 @@ class BasicNode (JSONResponder):
         
     quorum_size     = property( lambda self: self.mpax.quorum_size  )
     sequence_number = property( lambda self: self.mpax.instance_num )
-
-    
-    def is_initialized(self):
-        return self.mpax.quorum_size is not None
+    initialized     = property( lambda self: self.mpax.quorum_size is not None )
 
     
     def initialize(self, quorum_size):
-        assert not self.is_initialized(), 'MultiPaxos instance already initialized'
+        assert not self.initialized, 'MultiPaxos instance already initialized'
         
         self.mpax.initialize( self.node_uid, quorum_size )
 
@@ -346,7 +346,7 @@ class BasicNode (JSONResponder):
         if self.zpax_nodes is None:
             self.zpax_nodes = zpax_nodes
 
-        if not self.is_initialized():
+        if not self.initialized:
             # If no explicit quorum size has been set. Default to the minimum
             self.initialize( len(zpax_nodes)/2 + 1 )
                     
@@ -387,22 +387,6 @@ class BasicNode (JSONResponder):
         self.zpax_nodes = zpax_nodes
 
 
-    def _check_hmac(self, msg_parts):
-        if self.hmac_key:
-            h = hmac.new(self.hmac_key, digestmod=hashlib.sha1)
-            for jp in msg_parts[2:]:
-                h.update(jp)
-            if h.digest() == msg_parts[1]:
-                return msg_parts[2:]
-            else:
-                return None # Invalid HMAC, drop message
-        else:
-            return msg_parts[1:]
-            
-
-    #--------------------------------------------------------------------------
-    # Subclass API
-    #
     def onLeadershipAcquired(self):
         '''
         Called when this node acquires Paxos leadership.
@@ -491,32 +475,6 @@ class BasicNode (JSONResponder):
                                             value)
 
 
-    def publish(self, message_type, *parts, **kwargs):
-        if not parts:
-            parts = [{}]
-
-        seq_num = self.sequence_number if not 'sequence_number' in kwargs else kwargs['sequence_number']
-            
-        parts[0]['type'    ] = message_type
-        parts[0]['node_uid'] = self.node_uid
-        parts[0]['seq_num' ] = seq_num
-        
-        msg_stack = [ 'zpax' ]
-
-        jparts = [ json.dumps(p) for p in parts ]
-
-        if self.hmac_key:
-            h = hmac.new(self.hmac_key, digestmod=hashlib.sha1)
-            for jp in jparts:
-                h.update(jp)
-            msg_stack.append( h.digest() )
-
-        msg_stack.extend( jparts )
-        
-        self.pax_pub.send( msg_stack )
-        self.pax_sub.messageReceived( msg_stack )
-
-
     def shutdown(self):
         self.onShutdown()
         self.proposal_advocate.shutdown()
@@ -562,7 +520,8 @@ class BasicNode (JSONResponder):
         information for the added and or removed nodes)
         '''
         self.mpax.change_quorum_size( new_quorum_size )
-            
+
+        
     #--------------------------------------------------------------------------
     # Helper Methods
     #
@@ -572,7 +531,20 @@ class BasicNode (JSONResponder):
                            basic.Learner(quorum_size),
                            resolution_callback )
 
+    
+    def _check_hmac(self, msg_parts):
+        if self.hmac_key:
+            h = hmac.new(self.hmac_key, digestmod=hashlib.sha1)
+            for jp in msg_parts[2:]:
+                h.update(jp)
+            if h.digest() == msg_parts[1]:
+                return msg_parts[2:]
+            else:
+                return None # Invalid HMAC, drop message
+        else:
+            return msg_parts[1:]
 
+        
     #--------------------------------------------------------------------------
     # Heartbeats 
     #
@@ -582,6 +554,22 @@ class BasicNode (JSONResponder):
         
     def _pulse_leader_heartbeat(self):
         self.mpax.node.proposer.pulse()
+
+
+    #--------------------------------------------------------------------------
+    # Reply Socket Messaging 
+    #   
+    def _REP_propose_value(self, header):
+        #print 'Proposal made (%s)'% self.node_uid, 'Seq = ', self.sequence_number, 'Req: ', header
+        if header['seq_num'] == self.sequence_number:
+            if self.mpax.node.acceptor.accepted_value is None:
+                value = header['value']
+                if self.value_key and not value.startswith('ENC:'):
+                    value = encrypt_value(self.value_key, value)
+                #print 'Setting proposal'
+                self.mpax.set_proposal(self.sequence_number, value)
+                
+        self.pax_rep.send( json.dumps(dict(type='value_proposed')) )
 
         
     #--------------------------------------------------------------------------
@@ -631,10 +619,37 @@ class BasicNode (JSONResponder):
             value = decrypt_value(self.value_key, value)
 
         self.onProposalResolution(instance_num, value)
-        
+
+                
     #--------------------------------------------------------------------------
     # Paxos Messaging 
     #
+    def _publish(self, message_type, *parts, **kwargs):
+        if not parts:
+            parts = [{}]
+
+        seq_num = self.sequence_number if not 'sequence_number' in kwargs else kwargs['sequence_number']
+            
+        parts[0]['type'    ] = message_type
+        parts[0]['node_uid'] = self.node_uid
+        parts[0]['seq_num' ] = seq_num
+        
+        msg_stack = [ 'zpax' ]
+
+        jparts = [ json.dumps(p) for p in parts ]
+
+        if self.hmac_key:
+            h = hmac.new(self.hmac_key, digestmod=hashlib.sha1)
+            for jp in jparts:
+                h.update(jp)
+            msg_stack.append( h.digest() )
+
+        msg_stack.extend( jparts )
+        
+        self.pax_pub.send( msg_stack )
+        self.pax_sub.messageReceived( msg_stack )
+
+        
     def _SUB_paxos_heartbeat(self, header, pax):
         self.mpax.node.proposer.recv_heartbeat( tuple(pax[0]) )
         self.onHeartbeat( header )
@@ -646,7 +661,7 @@ class BasicNode (JSONResponder):
             r = self.mpax.recv_prepare(header['seq_num'], tuple(pax[0]))
             if r:
                 #print 'SND %s:  ' % self.node_uid[-5], (r[0][0], str(r[0][1][-5]))
-                self.publish( 'paxos_promise', {}, r )
+                self._publish( 'paxos_promise', {}, r )
 
             
     def _SUB_paxos_promise(self, header, pax):
@@ -664,7 +679,7 @@ class BasicNode (JSONResponder):
     def _SUB_paxos_accept(self, header, pax):
         #print 'Got Accept(%s)!' % self.node_uid, (self.sequence_number, header['seq_num']), header['node_uid'], pax[0]
         if header['seq_num'] == self.last_seq_num:
-            self.publish( 'value_accepted', dict(value=self.last_value), sequence_number=self.last_seq_num)
+            self._publish( 'value_accepted', dict(value=self.last_value), sequence_number=self.last_seq_num)
             return
         
         if self.checkSequence(header):
@@ -672,10 +687,10 @@ class BasicNode (JSONResponder):
                                               tuple(pax[0]),
                                               pax[1])
             if r:
-                self.publish( 'paxos_accepted', {}, r )
+                self._publish( 'paxos_accepted', {}, r )
             else:
-                self.publish( 'paxos_accepted_nack', dict( proposal_id = tuple(pax[0]),
-                                                           new_proposal_id = self.mpax.node.acceptor.promised_id) )
+                self._publish( 'paxos_accepted_nack', dict( proposal_id = tuple(pax[0]),
+                                                            new_proposal_id = self.mpax.node.acceptor.promised_id) )
         
 
     def _SUB_paxos_accepted(self, header, pax):
@@ -710,7 +725,7 @@ class BasicNode (JSONResponder):
         def recheck_send():
             if not self.mpax.node.proposer.leader_is_alive():
                 #print '### THERE CAN BE ONLY ONE! ###'
-                self.publish( 'paxos_prepare', {}, [proposal_id,] )
+                self._publish( 'paxos_prepare', {}, [proposal_id,] )
 
         w = self.mpax.node.proposer.liveness_window
         w = w - (w * 0.1)
@@ -723,7 +738,7 @@ class BasicNode (JSONResponder):
             self.accept_retry is None or not self.accept_retry.active()
             ):
             #print 'Sending accept', self.node_uid, self.mpax.have_leadership()
-            self.publish( 'paxos_accept', {}, [proposal_id, proposal_value] )
+            self._publish( 'paxos_accept', {}, [proposal_id, proposal_value] )
 
             retry_delay = self.mpax.node.proposer.hb_period
             
@@ -734,21 +749,5 @@ class BasicNode (JSONResponder):
             
 
     def _paxos_send_heartbeat(self, leader_proposal_id):
-        self.publish( 'paxos_heartbeat', self.getHeartbeatData(), [leader_proposal_id,] )
-
-
-    #--------------------------------------------------------------------------
-    # Reply Messaging 
-    #   
-    def _REP_propose_value(self, header):
-        #print 'Proposal made (%s)'% self.node_uid, 'Seq = ', self.sequence_number, 'Req: ', header
-        if header['seq_num'] == self.sequence_number:
-            if self.mpax.node.acceptor.accepted_value is None:
-                value = header['value']
-                if self.value_key and not value.startswith('ENC:'):
-                    value = encrypt_value(self.value_key, value)
-                #print 'Setting proposal'
-                self.mpax.set_proposal(self.sequence_number, value)
-                
-        self.pax_rep.send( json.dumps(dict(type='value_proposed')) )
+        self._publish( 'paxos_heartbeat', self.getHeartbeatData(), [leader_proposal_id,] )
 
