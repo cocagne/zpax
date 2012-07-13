@@ -1,3 +1,22 @@
+'''
+This module provides an implementation for a node in a basic, Multi-Paxos
+distributed consensus network.The intent is to create both a useful
+implementation for applications without strong performance requirements as well
+as an easily-understandable Paxos implementation. 
+
+The overriding goals of this implementation are simplicity and
+correctness. Performance is, of course, a consideration but, for this
+particular implementation, simple solutions that can get the job done are
+generally preferred over more complex and efficient approaches.
+
+With distributed consensus, there are quite a few performance considerations
+that must be taken into account by both the design and implementation. A
+general-purpose solution can provide, at best, mediocre performance for most
+application domains. When good performance is required, a domain-specific
+implementation is needed. This code is intended to serve as a simple reference
+implementation for those development efforts.
+'''
+
 import os
 import json
 import random
