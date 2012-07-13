@@ -57,7 +57,7 @@ class ValueAlreadyProposed(ProposalFailed):
 
 
 
-def encrypt_value( key, value ):
+def _encrypt_value( key, value ):
     if AES is None:
         raise Exception('Missing Pycrypto module. Encryption is not supported')
     
@@ -72,7 +72,7 @@ def encrypt_value( key, value ):
     return 'ENC:' + base64.b64encode(iv + c.encrypt(value))
 
 
-def decrypt_value( key, cipher_txt ):
+def _decrypt_value( key, cipher_txt ):
     if AES is None:
         raise Exception('Missing Pycrypto module. Encryption is not supported')
 
@@ -90,6 +90,12 @@ def decrypt_value( key, cipher_txt ):
 
 
 class BasicHeartbeatProposer (heartbeat.Proposer):
+    '''
+    This class extends paxos.proposers.heartbeat.Proposer and forwards all
+    calls to it's BasicNode instance. Instances of this class are pickled
+    and written to disk by the paxos.multi module to ensure correctness
+    in the presense of crashes/power failures.
+    '''
     hb_period       = 0.5
     liveness_window = 1.5
 
@@ -101,6 +107,9 @@ class BasicHeartbeatProposer (heartbeat.Proposer):
                                                      leader_uid = leader_uid)
 
     def __getstate__(self):
+        # Called by the pickling process. Our 'node' instance cannot be
+        # pickled so we omit it in our returned state. BasicNode will
+        # reset this attribute after unpickling occurs.
         d = dict(self.__dict__)
         del d['node']
         return d
@@ -129,9 +138,13 @@ class BasicHeartbeatProposer (heartbeat.Proposer):
 
 
 class BasicMultiPaxos(multi.MultiPaxos):
-
-    node_factory     = None
-    on_resolution_cb = None
+    '''
+    This class extends paxos.multi.MultiPaxos to omit unpicklable instance
+    state and forward the on_proposal_resolution callback to the
+    callable object stored in the instances' on_resolution_cb member
+    variable
+    '''
+    on_resolution_cb = None # Must be set to a callable object
 
     def __getstate__(self):
         d = dict( self.__dict__ )
@@ -146,8 +159,8 @@ class BasicMultiPaxos(multi.MultiPaxos):
 
 class JSONResponder (object):
     '''
-    Mixin class providing a simple mechanism for dispatching message handling
-    functions. 
+    Mixin class providing a simple mechanism for handling ZeroMQ messages
+    that are encoded in JSON notation. 
     '''
     def _generateResponder(self, prefix, parts_transform = lambda x : x):
         '''
@@ -156,6 +169,13 @@ class JSONResponder (object):
         first message part must include a "type" field that names the message
         type (as a string). The returned function will call a member function
         of the same name with the supplied prefix argument.
+
+        prefix - String added to the message type that names the message
+                 handling method
+
+        parts_transform - Optional function that may be used to manipulate the
+                          message parts received from ZeroMQ prior to JSON
+                          decoding
         '''
         def on_rcv(msg_parts):
             msg_parts = parts_transform(msg_parts)
@@ -183,9 +203,15 @@ class JSONResponder (object):
 
 class ProposalAdvocate (JSONResponder):
     '''
-    This class is responsible for ensuring that the current leader is
-    aware of our proposal if we have one. Whenever leadership changes,
-    the proposal is sent to the leader.
+    An essential component for successful use of Paxos is ensuring that once a
+    proposal has been made concensus must be continually pursued until it is
+    reached. This class assists in that endeavor by ensuring that the current
+    leader is informed of it's proposal if it has one. Every time leadership
+    changes, the new leader is notified of the proposed value.
+    
+    This approach adds an additional message delay when proposals are sent
+    to nodes other than the leader and can result in duplicate messages in
+    the presence of failures. However, it's easy to implement.
     '''
 
     def __init__(self, retry_delay):
@@ -218,7 +244,6 @@ class ProposalAdvocate (JSONResponder):
 
         
     def _connect(self):
-        #print 'CONNECT REQ: ', self.node_uid, self.current_leader_uid, self.current_leader_uid in self.zpax_nodes
         self._close_req()
 
         if self.leader_rep_addr:
@@ -286,15 +311,25 @@ class BasicNode (JSONResponder):
     template design pattern and delegates all application level logic to
     a subclass.
 
-    This class uses two paris of sockets. One is the Publish/Subscribe pair
-    for sending Paxos protocol messages. The second is a Req/Rep pair used
-    for communication with the current leader. As the leader is the one that
-    must propose the value, the proposeValue() method uses the Req socket to
-    forward the request to the current leader's Rep socket. This is infinitely
-    retried until an acknoledgement is received from the leader. When leadership
-    changes and the proposed value is still outstanding, the proposal is sent
-    to the new leader and infinitely retried until an acknowledgement is
-    received.
+    In addition to using the Publish/Subscribe sockets for sending the
+    Paxos protocol messages, a pair of Req/Rep sockets is used for
+    communicating proposals. Clients may connect to any node and issue
+    a proposal. If the receiving node is not the current leader, it will
+    forward the proposal to the current leader rather than try and
+    assume leadership itself (constant leadership battles can greatly
+    reduce performance).
+
+    To ensure forward progress, the ProposalAdvocate class is used to
+    inform each newly-elected leader of our current proposal if we have
+    one. 
+
+    This class optionally supports both HMAC message authentication and
+    encryption of proposed values to provide some measure of security when used
+    over insecure networks. As the encryption keys for both of these class
+    member variables must always be kept in perfect sync with the rest of the
+    Paxos network, it is highly recommended that changes to these values go
+    through the full Paxos protocol. The zpax.keyvalue implementation contains
+    and example of how this can be done.
     '''
 
     hb_proposer_klass = BasicHeartbeatProposer
@@ -313,7 +348,6 @@ class BasicNode (JSONResponder):
         self.zpax_nodes         = None # Dictionary of node_uid -> (rep_addr, pub_addr)
 
         self.pax_rep            = None
-        self.pax_req            = None # Assigned on leadership change
         self.pax_pub            = None
         self.pax_sub            = None
 
@@ -322,6 +356,7 @@ class BasicNode (JSONResponder):
         self.mpax.on_resolution_cb   = self._on_proposal_resolution
 
         if self.mpax.node:
+            # We're recovering durable state from disk
             self.mpax.node.proposer.node = self
             
             if self.mpax.node.proposer.value:
@@ -334,9 +369,9 @@ class BasicNode (JSONResponder):
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
 
-        # Optional Message Authentication & Encryption attributes
-        self.hmac_key  = None
-        self.value_key = None
+        
+        self.hmac_key  = None # Optional Message Authentication 
+        self.value_key = None # and Encryption attributes
 
         
     quorum_size     = property( lambda self: self.mpax.quorum_size  )
@@ -487,7 +522,7 @@ class BasicNode (JSONResponder):
             raise ValueAlreadyProposed()
 
         if self.value_key:
-            value = encrypt_value( self.value_key, value )
+            value = _encrypt_value( self.value_key, value )
 
         self.proposal_advocate.set_proposal(self.node_uid,
                                             self.sequence_number,
@@ -584,7 +619,7 @@ class BasicNode (JSONResponder):
             if self.mpax.node.acceptor.accepted_value is None:
                 value = header['value']
                 if self.value_key and not value.startswith('ENC:'):
-                    value = encrypt_value(self.value_key, value)
+                    value = _encrypt_value(self.value_key, value)
                 #print 'Setting proposal'
                 self.mpax.set_proposal(self.sequence_number, value)
                 
@@ -635,7 +670,7 @@ class BasicNode (JSONResponder):
             self.accept_retry = None
             
         if self.value_key:
-            value = decrypt_value(self.value_key, value)
+            value = _decrypt_value(self.value_key, value)
 
         self.onProposalResolution(instance_num, value)
 
