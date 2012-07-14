@@ -373,8 +373,8 @@ class SimpleTest(unittest.TestCase):
     def test_basic_encryption(self):
         key = '0123456789ABCDEF'
         val = '{foo=5}'
-        cip = node.encrypt_value( key, val )
-        dec = node.decrypt_value( key, cip )
+        cip = node._encrypt_value( key, val )
+        dec = node._decrypt_value( key, cip )
         self.assertEquals(val, dec)
 
 

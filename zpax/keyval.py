@@ -221,6 +221,9 @@ class KeyValueDB (node.JSONResponder):
         self.rep           = None
         self.dlr           = None
 
+        if self.isInitialized():
+            self._loadConfiguration()
+
 
     def onCaughtUp(self):
         pass
@@ -297,7 +300,8 @@ class KeyValueDB (node.JSONResponder):
 
                 
     def shutdown(self):
-        self.dlr.close()
+        if self.dlr:
+            self.dlr.close()
         self.rep.close()
         if self.catchup_retry and self.catchup_retry.active():
             self.catchup_retry.cancel()

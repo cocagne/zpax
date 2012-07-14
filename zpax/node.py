@@ -358,6 +358,8 @@ class BasicNode (JSONResponder):
         if self.mpax.node:
             # We're recovering durable state from disk
             self.mpax.node.proposer.node = self
+
+            self.mpax.node.proposer.on_recover()
             
             if self.mpax.node.proposer.value:
                 # If recovered node has a proposed value, give this to the proposal
@@ -705,12 +707,13 @@ class BasicNode (JSONResponder):
 
         
     def _SUB_paxos_heartbeat(self, header, pax):
+        #print self.node_uid, 'GOT HB'
         self.mpax.node.proposer.recv_heartbeat( tuple(pax[0]) )
         self.onHeartbeat( header )
 
     
     def _SUB_paxos_prepare(self, header, pax):
-        #print self.node_uid, 'got prepare', header, pax
+        #print self.node_uid, 'got prepare', header['node_uid']
         if self.checkSequence(header):
             r = self.mpax.recv_prepare(header['seq_num'], tuple(pax[0]))
             if r:
@@ -719,7 +722,7 @@ class BasicNode (JSONResponder):
 
             
     def _SUB_paxos_promise(self, header, pax):
-        #print 'RCV %s:' % self.node_uid[-5], header['node_uid'][-5], (pax[0][0], str(pax[0][1][-5]))
+        #print self.node_uid, 'got_propose', header['node_uid']
         if self.checkSequence(header):
             r = self.mpax.recv_promise(header['seq_num'],
                                        header['node_uid'],

@@ -192,6 +192,12 @@ class KeyValueDBTester(unittest.TestCase):
 
 
 
+    def get_key(self, client, key):
+        d = client.query(key)
+        d.addCallback( lambda r : r['value'] )
+        return d
+    
+
     @defer.inlineCallbacks
     def test_initial_leader(self):
         self.start('a b')
@@ -247,6 +253,33 @@ class KeyValueDBTester(unittest.TestCase):
         yield self.set_key(c, 'foo8', 'baz')
         yield self.set_key(c, 'foo9', 'baz')
 
+    @defer.inlineCallbacks
+    def test_shutdown_and_restart(self):
+        self.start('a b')
+
+        d = defer.Deferred()
+        c = self.new_client('a')
+
+        yield self.dleader
+        
+        yield self.set_key(c, 'foo0', 'bar')
+        yield self.set_key(c, 'foo1', 'bar')
+
+        self.stop('a b')
+
+        yield delay(0.05)
+
+        self.dleader = defer.Deferred()
+
+        self.start('a b')
+
+        yield self.dleader
+
+        v = yield self.get_key(c, 'foo0')
+
+        self.assertEquals(v, 'bar')
+
+        yield self.set_key(c, 'foo1', 'baz')
     
 
     @defer.inlineCallbacks
