@@ -152,7 +152,7 @@ class KeyValNode (node.BasicNode):
     #    print '*** Change of guard: ', prev_leader_uid, new_leader_uid
 
 
-    def onBehindInSequence(self):
+    def onBehindInSequence(self, old_sequence_number, new_sequence_number):
         self.kvdb.catchup()
 
         

@@ -142,7 +142,8 @@ class BasicMultiPaxos(multi.MultiPaxos):
     This class extends paxos.multi.MultiPaxos to omit unpicklable instance
     state and forward the on_proposal_resolution callback to the
     callable object stored in the instances' on_resolution_cb member
-    variable
+    variable (which will be a bound method to
+    BasicNode._on_proposal_resolution)
     '''
     on_resolution_cb = None # Must be set to a callable object
 
@@ -356,21 +357,24 @@ class BasicNode (JSONResponder):
         self.mpax.on_resolution_cb   = self._on_proposal_resolution
 
         if self.mpax.node:
+            #
             # We're recovering durable state from disk
+            #
             self.mpax.node.proposer.node = self
 
             self.mpax.node.proposer.on_recover()
             
             if self.mpax.node.proposer.value:
-                # If recovered node has a proposed value, give this to the proposal
-                # advocate
+                # If recovered node has a proposed value, the crash/shutdown
+                # occured while a value was being negotiated. The value must be
+                # given to the proposal advocate to ensure that the negotiation
+                # completes.
                 self.proposal_advocate.set_proposal( self.node_uid,
                                                      self.sequence_number,
                                                      self.mpax.node.proposer.value )
 
         self.heartbeat_poller = task.LoopingCall( self._poll_heartbeat         )
         self.heartbeat_pulser = task.LoopingCall( self._pulse_leader_heartbeat )
-
         
         self.hmac_key  = None # Optional Message Authentication 
         self.value_key = None # and Encryption attributes
@@ -382,6 +386,11 @@ class BasicNode (JSONResponder):
 
     
     def initialize(self, quorum_size):
+        '''
+        This method should only be called once during the initial setup.
+        Afterwards, the quorum size may be changed with the changeQuorumSize()
+        method
+        '''
         assert not self.initialized, 'MultiPaxos instance already initialized'
         
         self.mpax.initialize( self.node_uid, quorum_size )
@@ -391,10 +400,26 @@ class BasicNode (JSONResponder):
 
 
     def connect(self, zpax_nodes):
-        # Dictionary of node_uid -> (rep_addr, pub_addr)
+        '''
+        Connects this node to the nodes contained in zpax_nodes. This method
+        may be called on-the-fly to update the node's connections as the
+        Paxos configuration changes. Note that the nodes need to agree on what
+        the Paxos membership should be in order for dynamic reconfiguration to
+        work. It is highly recommended that changes to the Paxos membership be
+        negotiated through the Paxos protocol itself. The keyvalue module
+        provides and example of how to accomplish this.
+
+        zpax_nodes - Dictionary of node_uid => (zmq_rep_addr, zmq_pub_addr)
+        '''
+        
+        # Note: This method looks more complex than it actually is. Essentially
+        #       all that's being done is updating the current ZeroMQ sockets
+        #       to connect to the list of nodes in the zpax nodes argument. The
+        #       verbose implementation comes from trying to avoid unnessary
+        #       socket closures/reconnects.
         
         if self.zpax_nodes == zpax_nodes:
-            return # already connected
+            return # No change
 
         if not self.node_uid in zpax_nodes:
             raise Exception('Missing local node configuration')
@@ -450,9 +475,8 @@ class BasicNode (JSONResponder):
         Note, this is not reliable as a unique distiction between
         nodes. Multiple nodes may simultaneously believe themselves to be the
         leader. Also, it is possible for another leader to have been elected
-        and several proposals resolved before this method is even called. Be
-        wary of using this method for anything beyond starting a timer for
-        sending heartbeats.
+        and several proposals resolved before this method is even called. Use
+        caution when employing this or any other leadership-related method.
         '''
 
     def onLeadershipLost(self):
@@ -469,40 +493,63 @@ class BasicNode (JSONResponder):
         See note on onLeadershipAcquired() about the reliability of this method.
         '''
 
-    def onBehindInSequence(self):
+    def onBehindInSequence(self, old_sequence_number, new_sequnce_number):
         '''
-        Called when this node's sequence number is behind the most recently observed
-        value.
+        Called when this node's sequence number is observed to be behind a more
+        recent value. Note that there is no guarantee that the new sequence
+        number is the one currently under negotiation. It would well be
+        hundreds of iterations behind the truly current sequence number.
         '''
 
     def onProposalResolution(self, instance_num, value):
         '''
         Called when an instance of the Paxos algorithm agrees on a value.
+        Note that this does not mean that this instance is the most recent.
+        Due to network delays, system restarts, OS hibernation, etc, it is
+        possible that thousands of additional resolutions may have taken
+        place by the time this method is invoked.        
         '''
 
     def onHeartbeat(self, data):
         '''
-        data - Dictionary of key=value paris in the heartbeat message
+        data - Dictionary of key=value pairs contained in the heartbeat message
         '''
 
     def onShutdown(self):
         '''
-        Called immediately before shutting down
+        Called immediately before shutting down. Resource cleanups should occur
+        here.
         '''
 
     def getHeartbeatData(self):
         '''
-        Returns a dictionary of key=value parameters to be included
-        in the heartbeat message
+        Returns a dictionary of key=value parameters to be included in the
+        heartbeat message. Subclasses may override this method to include
+        application-specific content in the heartbeat messages. The
+        onHeartbeat() method on the receiving nodes method will be given
+        the content returned here.
         '''
         return {}
 
     
     def currentInstanceNum(self):
+        '''
+        Returns the instance number this node believes is the current instance
+        under negotiation. This may or not be the true current instance number.
+        '''
         return self.mpax.instance_num
 
     
     def slewSequenceNumber(self, new_sequence_number):
+        '''
+        Sets the current instance number to the new value. This may be used
+        by subclasses to advance an out-of-date node to the current Paxos
+        instance. Great care must be taken when using this method, however.
+        If state from the previous Paxos instances is of importance, the
+        subclass must ensure that it has completely caught up with its
+        peers and is ready to engage in negotiation of the new sequence
+        number.
+        '''
         assert new_sequence_number > self.sequence_number
 
         self.proposal_advocate.cancel_proposal( new_sequence_number - 1 )
@@ -514,6 +561,14 @@ class BasicNode (JSONResponder):
 
         
     def proposeValue(self, value, sequence_number=None):
+        '''
+        Proposes a value for the current Paxos round. If a sequence_number is
+        specified in the argument list, an exception will be thrown if it does
+        not match the current value. An exception will also be thrown if this
+        node is aware that a value has already been proposed. This is for
+        early-failure-detection only. The lack of a thrown exception does not
+        mean that the value will be chosen as the Paxos round's final result.
+        '''
         if sequence_number is not None and not sequence_number == self.sequence_number:
             raise SequenceMismatch( self.sequence_number )
 
@@ -562,7 +617,7 @@ class BasicNode (JSONResponder):
         seq = header['seq_num']
         
         if seq > self.sequence_number:
-            self.onBehindInSequence()
+            self.onBehindInSequence(self.sequence_number, seq)
             
         return seq == self.sequence_number
 

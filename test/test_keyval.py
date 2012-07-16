@@ -280,7 +280,41 @@ class KeyValueDBTester(unittest.TestCase):
         self.assertEquals(v, 'bar')
 
         yield self.set_key(c, 'foo1', 'baz')
-    
+
+
+    @defer.inlineCallbacks
+    def test_shutdown_and_restart_with_outstanding_proposal(self):
+        self.start('a b')
+
+        d = defer.Deferred()
+        c = self.new_client('a')
+
+        yield self.dleader
+        
+        yield self.set_key(c, 'foo0', 'bar')
+
+        self.stop('b')
+
+        yield c.propose('foo1', 'bar')
+
+        self.stop('a')
+
+        yield delay(0.05)
+
+        self.dleader = defer.Deferred()
+
+        self.start('a b')
+
+        yield self.dleader
+
+        v = None
+        while v != 'bar':
+            v = yield self.get_key(c, 'foo1')
+            yield delay(0.01)
+
+        self.assertEquals(v, 'bar')
+
+            
 
     @defer.inlineCallbacks
     def xtest_zmq_req_down_rep_node(self):

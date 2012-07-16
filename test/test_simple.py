@@ -325,9 +325,9 @@ class SimpleTest(unittest.TestCase):
         
         #print '*** Disabling:', self.seq, n.name
         n.drop_packets       = True
-        n.onBehindInSequence = lambda : d.callback(None)
+        n.onBehindInSequence = lambda x,y: d.callback(None)
 
-        def cb():
+        def cb(x,y):
             #print '******** BEHIND IN SEQUENCE ***********'
             d.callback(None)
 
