@@ -135,6 +135,8 @@ class KeyValueDBTester(unittest.TestCase):
                         
             n = TestKV(node_name, self.tdir, os.path.join(self.tdir, node_name + '.sqlite'))
 
+            n.allow_config_proposals = True
+
             if hmac_key:
                 n.kv_node.hmac_key = hmac_key
 

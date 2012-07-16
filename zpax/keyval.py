@@ -1,3 +1,12 @@
+'''
+This module implements a simple, distributed Key-Value database that uses Paxos
+for ensuring consistency between nodes. The goal of this module is to provide a
+simple and correct implementation that is useful both as an example for using
+zpax for distributed consensus as well as an actual, embedded database for real
+applications. Due to the simplicity goal, the performance of this
+implementation is not stellar but should be sufficient for lightweight usage.
+'''
+
 import os.path
 import sqlite3
 import json
@@ -19,15 +28,16 @@ value    text,
 resolution integer
 '''
 
+
 class MissingConfiguration (Exception):
     pass
+
 
 class SqliteDB (object):
 
     def __init__(self, fn):
         self._fn = fn
         create = not os.path.exists(fn)
-
         
         self._con = sqlite3.connect(fn)
         self._cur = self._con.cursor()
@@ -62,7 +72,6 @@ class SqliteDB (object):
         
     def update_key(self, key, value, resolution_number):
         prevpn = self.get_resolution(key)
-        #print 'PREV REV', prevpn, 'NEW REV', resolution_number
 
         if prevpn is None:
             self._cur.execute('INSERT INTO kv VALUES (?, ?, ?)',
@@ -70,7 +79,6 @@ class SqliteDB (object):
             self._con.commit()
             
         elif resolution_number > prevpn:
-            #print 'UPDATING TO: ', value
             self._cur.execute('UPDATE kv SET value=?, resolution=? WHERE key=?',
                               (value, resolution_number, key))
             self._con.commit()
@@ -120,9 +128,6 @@ class KeyValNode (node.BasicNode):
     
     
     def onHeartbeat(self, data):
-        #if self.node_uid in 'd':
-        #    print 'Heartbeat Received', self.node_uid, data['seq_num'] - 1, self.kvdb.getMaxDBSequenceNumber()
-            
         if data['seq_num'] - 1 > self.kvdb.getMaxDBSequenceNumber():
             if data['seq_num'] > self.currentInstanceNum():
                 self.slewSequenceNumber( data['seq_num'] )
@@ -132,24 +137,9 @@ class KeyValNode (node.BasicNode):
 
     # Override the sequence checking function in the baseclass to cause all
     # packets to be dropped from our Paxos implementation while our database
-    # is behind
+    # is out of sync
     def checkSequence(self, header):
         return super(KeyValNode,self).checkSequence(header) and not self.kvdb.isCatchingUp()
-
-
-    #def onShutdown(self):
-    #    print self.node_uid, 'Shutdown!'
-        
-    def onLeadershipAcquired(self):
-        print self.node_uid, 'I have the leader!'
-
-
-    def onLeadershipLost(self):
-        print self.node_uid, 'I LOST the leader!'
-
-
-    #def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
-    #    print '*** Change of guard: ', prev_leader_uid, new_leader_uid
 
 
     def onBehindInSequence(self, old_sequence_number, new_sequence_number):
@@ -158,11 +148,7 @@ class KeyValNode (node.BasicNode):
         
     def onProposalResolution(self, instance_num, value):
         # This method is only called when our database is current
-        if self.chatty:
-            print '*** Resolution! ', instance_num, repr(value)
-
-        #print '** DECODED: ', json.loads(value)
-
+        
         key, value = json.loads(value)
 
         self.kvdb.onValueSet( key, value, instance_num )
@@ -172,17 +158,42 @@ class KeyValNode (node.BasicNode):
 
 class KeyValueDB (node.JSONResponder):
     '''
-    This class implements a distributed key=value database that uses
-    Paxos to coordinate database updates. Unlike the replacated state
-    machine design typically discussed in Paxos literature, this implementation
-    takes a simpler approach to ensure consistency. Each key/value update
-    includes in the database the Multi-Paxos instance number used to set
-    the value for that key. When a node sees an instance number ahead of what
-    it thinks is the current number, it continually requests key-value pairs
-    with greater instance ids from peer nodes. These are returned in sorted
-    order. When the node detects that the current Paxos instance is 1 greater
-    than it's most recent database entry, it knows that it is consistent
-    with it's peers and will begin participating in Paxos instance resolutions.
+    This class implements a distributed key=value database that uses Paxos to
+    coordinate database updates. Unlike the replacated state machine design
+    typically discussed in Paxos literature, this implementation takes a
+    simpler approach to ensure consistency. Each key/value update includes in
+    the database the Multi-Paxos instance number used to set the value for that
+    key.
+
+    Nodes detect that their database is out of sync with their peers when it
+    sees a heartbeat message for for a Multi-Paxos instance ahead of what it is
+    expecting. When this occurs, the node suspends it's participation in the
+    Paxos protocol and synchronizes it's database. This is accomplished by
+    continually requesting key-value pairs with instance ids greater than what
+    it has already received. These are requested in ascending order until the
+    node recieves the key-value pair with an instance number that is 1 less
+    than the current Multi-Paxos instance under negotiation. This indicates
+    that the node has fully synchronized with it's peers and may rejoin the
+    Paxos protocol.
+
+    To support the addition and removal of nodes, the configuration for the
+    paxos configuration is, itself, stored in the database. This
+    automatically ensures that at least a quorum number of nodes always agree
+    on what the current configuration is and, consequently, ensures that
+    progress can always be made. Note, however, that if encryption is
+    being used and the encryption key changes, some additional work will be
+    required to enable the out-of-date nodes to catch up.
+
+    With this implementation, queries to nodes may return data that is out of
+    date. "Retrieve the most recent value" is not an operation that this
+    implementation can reliably handle; it is imposible to reliably detect
+    whether this node's data is consistent with it's peers at any given point
+    in time. Successful handling of this operation requires either that the
+    read operation flow through the Paxos algorighm itself (and in which case
+    the value could be rendered out-of-date even before it is delivered to the
+    client) or leadership-leases must be used. Leadership leases are relatively
+    straight-forward to implement but are omitted here for the sake of
+    simplicity.
     '''
 
     _node_klass = KeyValNode
@@ -207,6 +218,10 @@ class KeyValueDB (node.JSONResponder):
         self.node_uid = node_uid
         self.kv_node = self._node_klass(self, node_uid, durable_dir, durable_id)
 
+        # By default, prevent arbitrary clients from proposing new
+        # configuration values
+        self.allow_config_proposals = False
+
         self.catchup_retry_delay = catchup_retry_delay
         self.catchup_num_items   = catchup_num_items
             
@@ -228,6 +243,7 @@ class KeyValueDB (node.JSONResponder):
     def onCaughtUp(self):
         pass
 
+    
     def _loadConfiguration(self, cfg_str=None):
         if cfg_str is None:
             cfg_str = self.db.get_value(_ZPAX_CONFIG_KEY)
@@ -253,7 +269,6 @@ class KeyValueDB (node.JSONResponder):
             self.rep_addr = my_addr
             if self.rep is not None:
                 self.rep.close()
-            #print '****** REP CREATED: ', self.node_uid, self.rep_addr
             self.rep = tzmq.ZmqRepSocket()
             self.rep.bind(self.rep_addr)
             self.rep.messageReceived = self._generateResponder( '_REP_' )
@@ -266,22 +281,21 @@ class KeyValueDB (node.JSONResponder):
             self.dlr.messageReceived = self._generateResponder( '_DLR_',
                                                                 lambda x : x[1:])
 
-            #print 'REQ ', self.node_uid
             for x in kv_reps:
                 self.dlr.connect(x)
-                #print '     Connecting to: ', x
+                
 
+        # Quorum size may be specified in the config if tighter consistency
+        # requirements are desired
         if 'quorum_size' in cfg:
             quorum_size = cfg['quorum_size']
         else:
             quorum_size = len(cfg['nodes'])/2 + 1
 
-        #print 'QUORUM_SIZE:', self.node_uid, self.kv_node.quorum_size, quorum_size
         if not self.kv_node.initialized:
             self.kv_node.initialize( quorum_size )
 
         elif self.kv_node.quorum_size != quorum_size:
-            #print '      CHANGING!'
             self.kv_node.changeQuorumSize( quorum_size )
 
         self.kv_node.connect( zpax_nodes )
@@ -317,7 +331,6 @@ class KeyValueDB (node.JSONResponder):
 
 
     def onValueSet(self, key, value, instance_num):
-        #print 'VALUE SET!', self.node_uid, key
         if key == _ZPAX_CONFIG_KEY:
             try:
                 self._loadConfiguration( value )
@@ -335,26 +348,17 @@ class KeyValueDB (node.JSONResponder):
 
         
     def _catchup(self):
-        if self.chatty:
-            print '_catchup(): ',
         self.catching_up = self.db_seq != self.kv_node.currentInstanceNum() - 1
         
         if not self.catching_up:
             self.onCaughtUp()
-            if self.chatty:
-                print '*** CAUGHT UP!! ***'
             return
-
-        if self.chatty:
-            print 'Requesting next batch from ', self.db_seq
 
         self.catchup_retry = reactor.callLater(self.catchup_retry_delay,
                                                self._catchup)
 
-        try:
-            self.dlr.send( '', json.dumps( dict(type='catchup_request', last_known_seq=self.db_seq) ) )
-        except Exception, e:
-            print 'EXCEPT! ', str(e)
+        self.dlr.send( '', json.dumps( dict(type='catchup_request', last_known_seq=self.db_seq) ) )
+        
 
         
     #--------------------------------------------------------------------------
@@ -365,31 +369,22 @@ class KeyValueDB (node.JSONResponder):
             # Reply to an old request. Ignore it.
             return
             
-        if False:#self.chatty:
-            print 'CATCHUP MSG: ', msg
-            print 'Catchup Data({},{}): '.format(msg['from_seq'], self.db_seq),
-            print ', '.join( '({}{}{})'.format(*t) for t in msg['key_val_seq_list'] )
-        
         if self.catchup_retry and self.catchup_retry.active():
             self.catchup_retry.cancel()
             self.catchup_retry = None
             
         if msg['from_seq'] == self.db_seq:
             for key, val, seq_num in msg['key_val_seq_list']:
-                # XXX Convert to updating all keys in one commit
                 if key == _ZPAX_CONFIG_KEY:
                     try:
                         self._loadConfiguration(val)
                     except MissingConfiguration:
-                        # We've been removed from the loop :(
+                        # We've been removed from the inner circle :(
                         pass
                 self.db.update_key(key, val, seq_num)
                 
             self.db_seq = self.db.get_last_resolution()
 
-            if self.chatty:
-                print 'LAST RESOLUTION: ', self.db.get_last_resolution()
-                    
         self._catchup()
 
     #--------------------------------------------------------------------------
@@ -400,25 +395,19 @@ class KeyValueDB (node.JSONResponder):
 
         
     def _REP_propose_value(self, header):
-        if self.chatty:
-            print 'Proposing ', header
         try:
-            #if header['key'] == _ZPAX_CONFIG_KEY:
-            #    raise Exception('Access Denied')
+            if not self.allow_config_proposals and header['key'] == _ZPAX_CONFIG_KEY:
+                raise Exception('Access Denied')
             jstr = json.dumps( [header['key'], header['value']] )
             self.kv_node.proposeValue(jstr)
             self.rep_reply( proposed = True )
         except node.ProposalFailed, e:
-            #print 'Proposal FAILED: ', str(e)
             self.rep_reply(proposed=False, message=str(e))
 
             
     def _REP_query_value(self, header):
-        if self.chatty:
-            print 'Querying ', header
-        if header['key'] == _ZPAX_CONFIG_KEY:
-            #self.rep_reply(error='Access Denied')
-            self.rep_reply( value = self.db.get_value(header['key']) )
+        if not self.allow_config_proposals and header['key'] == _ZPAX_CONFIG_KEY:
+            self.rep_reply(error='Access Denied')
         else:
             self.rep_reply( value = self.db.get_value(header['key']) )
 
@@ -435,7 +424,3 @@ class KeyValueDB (node.JSONResponder):
                         from_seq         = header['last_known_seq'],
                         key_val_seq_list = l )
 
-
-        
-
-        

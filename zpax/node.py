@@ -669,15 +669,17 @@ class BasicNode (JSONResponder):
 
     #--------------------------------------------------------------------------
     # Reply Socket Messaging 
-    #   
+    #
+    # Methods named '_REP_<message_type>' are called when packets of that type
+    # are recieved over the ZeroMQ Reply socket
+    #
     def _REP_propose_value(self, header):
-        #print 'Proposal made (%s)'% self.node_uid, 'Seq = ', self.sequence_number, 'Req: ', header
         if header['seq_num'] == self.sequence_number:
             if self.mpax.node.acceptor.accepted_value is None:
                 value = header['value']
                 if self.value_key and not value.startswith('ENC:'):
                     value = _encrypt_value(self.value_key, value)
-                #print 'Setting proposal'
+                
                 self.mpax.set_proposal(self.sequence_number, value)
                 
         self.pax_rep.send( json.dumps(dict(type='value_proposed')) )
@@ -733,7 +735,10 @@ class BasicNode (JSONResponder):
 
                 
     #--------------------------------------------------------------------------
-    # Paxos Messaging 
+    # Paxos Messaging
+    #
+    # Methods named '_SUB_<message_type>' are called when packets of that type
+    # are recieved over the ZeroMQ Subscribe socket
     #
     def _publish(self, message_type, *parts, **kwargs):
         if not parts:
@@ -762,22 +767,18 @@ class BasicNode (JSONResponder):
 
         
     def _SUB_paxos_heartbeat(self, header, pax):
-        #print self.node_uid, 'GOT HB'
         self.mpax.node.proposer.recv_heartbeat( tuple(pax[0]) )
         self.onHeartbeat( header )
 
     
     def _SUB_paxos_prepare(self, header, pax):
-        #print self.node_uid, 'got prepare', header['node_uid']
         if self.checkSequence(header):
             r = self.mpax.recv_prepare(header['seq_num'], tuple(pax[0]))
             if r:
-                #print 'SND %s:  ' % self.node_uid[-5], (r[0][0], str(r[0][1][-5]))
                 self._publish( 'paxos_promise', {}, r )
 
             
     def _SUB_paxos_promise(self, header, pax):
-        #print self.node_uid, 'got_propose', header['node_uid']
         if self.checkSequence(header):
             r = self.mpax.recv_promise(header['seq_num'],
                                        header['node_uid'],
@@ -789,7 +790,6 @@ class BasicNode (JSONResponder):
             
 
     def _SUB_paxos_accept(self, header, pax):
-        #print 'Got Accept(%s)!' % self.node_uid, (self.sequence_number, header['seq_num']), header['node_uid'], pax[0]
         if header['seq_num'] == self.last_seq_num:
             self._publish( 'value_accepted', dict(value=self.last_value), sequence_number=self.last_seq_num)
             return
@@ -806,7 +806,6 @@ class BasicNode (JSONResponder):
         
 
     def _SUB_paxos_accepted(self, header, pax):
-        #print 'Got accepted(%s)' % self.node_uid, (self.sequence_number, header['seq_num']), header['node_uid']#, pax[0]
         if self.checkSequence(header):
             self.mpax.recv_accepted(header['seq_num'], header['node_uid'],
                                     tuple(pax[0]), pax[1])
@@ -820,9 +819,7 @@ class BasicNode (JSONResponder):
 
 
     def _SUB_value_accepted(self, header):
-        #print 'RECV VAL ACCEPTED: ', self.node_uid
         if self.checkSequence(header):
-            #print '      TIS GOOD', header['value']
             self.slewSequenceNumber(self.sequence_number + 1)
             self._on_proposal_resolution(header['seq_num'], header['value'])
             
@@ -830,13 +827,14 @@ class BasicNode (JSONResponder):
         
 
     def _paxos_send_prepare(self, proposal_id):
-        #print self.node_uid, 'sending prepare: ', proposal_id
-        
-        # Add a random delay before sending this message and recheck to see if a
-        # leader is active. This should reduce battles for supremacy.
+        #
+        # To reduce the potential for leadership battles, we'll introduce a
+        # small, random delay before the prepare message as sent and recheck
+        # the status of the leader prior to sending. If a leader has been
+        # elected in this time, we'll cancel the send
+        #
         def recheck_send():
             if not self.mpax.node.proposer.leader_is_alive():
-                #print '### THERE CAN BE ONLY ONE! ###'
                 self._publish( 'paxos_prepare', {}, [proposal_id,] )
 
         w = self.mpax.node.proposer.liveness_window
@@ -846,10 +844,9 @@ class BasicNode (JSONResponder):
 
         
     def _paxos_send_accept(self, proposal_id, proposal_value):
-        if self.mpax.have_leadership() and (
-            self.accept_retry is None or not self.accept_retry.active()
-            ):
-            #print 'Sending accept', self.node_uid, self.mpax.have_leadership()
+        retrying = self.accept_retry and self.accept_retry.active()
+        
+        if self.mpax.have_leadership() and not retrying:
             self._publish( 'paxos_accept', {}, [proposal_id, proposal_value] )
 
             retry_delay = self.mpax.node.proposer.hb_period
