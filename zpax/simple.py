@@ -7,29 +7,29 @@ from twisted.internet import defer, task, reactor
 
 class SimpleNode (node.BasicNode):
     '''
-    This class implements a network node that uses Paxos to coordinate
-    changes to a single, shared value.
+    This class implements a network node that uses Paxos to coordinate changes
+    to a single, shared value.
 
-    Clients propose changes, learn the current value, and wait for new
-    values to be chosen via a Router socket. The Pub/Sub Paxos
-    messaging is handled by node.BasicNode.
+    Clients propose changes, learn the current value, and wait for new values
+    to be chosen via a Router socket. The Pub/Sub Paxos messaging is handled by
+    node.BasicNode.
     '''
     
     def __init__(self, node_uid,
                  local_rtr_addr,
-                 initial_value='',
                  durable_dir=None,
                  object_id=None):
 
         super(SimpleNode,self).__init__(node_uid, durable_dir, object_id)
 
         self.local_rtr_addr   = local_rtr_addr
-        self.value            = initial_value
+        self.value            = ''
 
         self.waiting_clients  = set() # Contains router addresses of clients waiting for updates
 
         self.router           = tzmq.ZmqRouterSocket()
 
+        self.router.linger = 0
         self.router.messageReceived = self._on_router_received
         
         self.router.bind(self.local_rtr_addr)
@@ -67,7 +67,7 @@ class SimpleNode (node.BasicNode):
     def _SUB_value(self, header):
         if header['seq_num'] > self.sequence_number:
             self.value = header['value']
-            self.slewSequenceNumber(header['seq_num'])
+            self.setCurrentSequenceNumber(header['seq_num'])
 
             
     #--------------------------------------------------------------------------

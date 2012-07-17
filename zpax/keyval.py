@@ -124,13 +124,13 @@ class KeyValNode (node.BasicNode):
 
 
     def getHeartbeatData(self):
-        return dict( seq_num = self.currentInstanceNum() )
+        return dict( seq_num = self.getCurrentSequenceNumber() )
     
     
     def onHeartbeat(self, data):
         if data['seq_num'] - 1 > self.kvdb.getMaxDBSequenceNumber():
-            if data['seq_num'] > self.currentInstanceNum():
-                self.slewSequenceNumber( data['seq_num'] )
+            if data['seq_num'] > self.getCurrentSequenceNumber():
+                self.setCurrentSequenceNumber( data['seq_num'] )
 
             self.kvdb.catchup()
 
@@ -197,7 +197,6 @@ class KeyValueDB (node.JSONResponder):
     '''
 
     _node_klass = KeyValNode
-    chatty = None
     
     def __init__(self, node_uid,
                  database_dir,
@@ -270,6 +269,7 @@ class KeyValueDB (node.JSONResponder):
             if self.rep is not None:
                 self.rep.close()
             self.rep = tzmq.ZmqRepSocket()
+            self.rep.linger = 0
             self.rep.bind(self.rep_addr)
             self.rep.messageReceived = self._generateResponder( '_REP_' )
 
@@ -341,14 +341,14 @@ class KeyValueDB (node.JSONResponder):
 
 
     def catchup(self):
-        if self.catching_up or self.db_seq == self.kv_node.currentInstanceNum() - 1:
+        if self.catching_up or self.db_seq == self.kv_node.getCurrentSequenceNumber() - 1:
             return 
         
         self._catchup()
 
         
     def _catchup(self):
-        self.catching_up = self.db_seq != self.kv_node.currentInstanceNum() - 1
+        self.catching_up = self.db_seq != self.kv_node.getCurrentSequenceNumber() - 1
         
         if not self.catching_up:
             self.onCaughtUp()

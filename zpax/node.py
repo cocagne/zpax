@@ -140,10 +140,9 @@ class BasicHeartbeatProposer (heartbeat.Proposer):
 class BasicMultiPaxos(multi.MultiPaxos):
     '''
     This class extends paxos.multi.MultiPaxos to omit unpicklable instance
-    state and forward the on_proposal_resolution callback to the
-    callable object stored in the instances' on_resolution_cb member
-    variable (which will be a bound method to
-    BasicNode._on_proposal_resolution)
+    state and forward the on_proposal_resolution callback to the callable
+    object stored in the instances' on_resolution_cb member variable (which
+    will be a bound method to BasicNode._on_proposal_resolution)
     '''
     on_resolution_cb = None # Must be set to a callable object
 
@@ -166,10 +165,10 @@ class JSONResponder (object):
     def _generateResponder(self, prefix, parts_transform = lambda x : x):
         '''
         Returns a message dispatching function suitable for assignment to a
-        ZmqSocket instance. The message parts must be in JSON format and the
-        first message part must include a "type" field that names the message
-        type (as a string). The returned function will call a member function
-        of the same name with the supplied prefix argument.
+        ZmqSocket's onMessageReceived member. The message parts must be in JSON
+        format and the first message part must include a "type" field that
+        names the message type (as a string). The returned function will call a
+        member function of the same name with the supplied prefix argument.
 
         prefix - String added to the message type that names the message
                  handling method
@@ -204,15 +203,16 @@ class JSONResponder (object):
 
 class ProposalAdvocate (JSONResponder):
     '''
-    An essential component for successful use of Paxos is ensuring that once a
-    proposal has been made concensus must be continually pursued until it is
+    An essential component for successful use of Paxos is ensuring that, once a
+    proposal has been made, concensus must be continually pursued until it is
     reached. This class assists in that endeavor by ensuring that the current
-    leader is informed of it's proposal if it has one. Every time leadership
-    changes, the new leader is notified of the proposed value.
+    leader is always informed of a node's proposal if it has one. Every time
+    leadership changes, the new leader is notified of the proposed value.
     
     This approach adds an additional message delay when proposals are sent
     to nodes other than the leader and can result in duplicate messages in
-    the presence of failures. However, it's easy to implement.
+    the presence of failures. However, the implementation is straight-forward
+    and easy to understand.
     '''
 
     def __init__(self, retry_delay):
@@ -307,29 +307,26 @@ class ProposalAdvocate (JSONResponder):
             
 class BasicNode (JSONResponder):
     '''
-    This class provides the basic functionality required for Multi-Paxos
-    over ZeroMQ Publish/Subscribe sockets. This class follows the GoF95
-    template design pattern and delegates all application level logic to
-    a subclass.
+    This class provides the basic functionality required for Multi-Paxos over
+    ZeroMQ Publish/Subscribe sockets. This class follows the GoF95 template
+    design pattern and delegates all application level logic to a subclass.
 
-    In addition to using the Publish/Subscribe sockets for sending the
-    Paxos protocol messages, a pair of Req/Rep sockets is used for
-    communicating proposals. Clients may connect to any node and issue
-    a proposal. If the receiving node is not the current leader, it will
-    forward the proposal to the current leader rather than try and
-    assume leadership itself (constant leadership battles can greatly
-    reduce performance).
+    In addition to using the Publish/Subscribe sockets for sending the Paxos
+    protocol messages, a pair of Req/Rep sockets is used for communicating
+    proposals. Clients may connect to any node and issue a proposal. If the
+    receiving node is not the current leader, it will forward the proposal to
+    the current leader rather than try and assume leadership itself (constant
+    leadership battles can greatly reduce performance).
 
-    To ensure forward progress, the ProposalAdvocate class is used to
-    inform each newly-elected leader of our current proposal if we have
-    one. 
+    To ensure forward progress, the ProposalAdvocate class is used to inform
+    each newly-elected leader of the node's current proposal if it has one.
 
     This class optionally supports both HMAC message authentication and
     encryption of proposed values to provide some measure of security when used
     over insecure networks. As the encryption keys for both of these class
     member variables must always be kept in perfect sync with the rest of the
     Paxos network, it is highly recommended that changes to these values go
-    through the full Paxos protocol. The zpax.keyvalue implementation contains
+    through the full Paxos protocol. The zpax.keyval implementation contains
     and example of how this can be done.
     '''
 
@@ -438,6 +435,7 @@ class BasicNode (JSONResponder):
             if self.pax_rep:
                 self.pax_rep.close()
             self.pax_rep = tzmq.ZmqRepSocket()
+            self.pax_rep.linger = 0
             self.pax_rep.bind(zpax_nodes[self.node_uid][0])
             self.pax_rep.messageReceived = self._generateResponder('_REP_')
 
@@ -445,6 +443,7 @@ class BasicNode (JSONResponder):
             if self.pax_pub:
                 self.pax_pub.close()
             self.pax_pub = tzmq.ZmqPubSocket()
+            self.pax_pub.linger = 0
             self.pax_pub.bind(zpax_nodes[self.node_uid][1])
 
         prev_remote = set( t[1] for t in self.zpax_nodes.itervalues() )
@@ -455,7 +454,7 @@ class BasicNode (JSONResponder):
                 self.pax_sub.close()
 
             self.pax_sub = tzmq.ZmqSubSocket()
-
+            self.pax_sub.linger = 0
             self.pax_sub.subscribe       = 'zpax'        
             self.pax_sub.messageReceived = self._generateResponder('_SUB_', self._check_hmac)
 
@@ -501,13 +500,13 @@ class BasicNode (JSONResponder):
         hundreds of iterations behind the truly current sequence number.
         '''
 
-    def onProposalResolution(self, instance_num, value):
+    def onProposalResolution(self, sequence_num, value):
         '''
-        Called when an instance of the Paxos algorithm agrees on a value.
-        Note that this does not mean that this instance is the most recent.
+        Called when an instance of the Paxos algorithm agrees on a value.  Note
+        that this does not mean that this sequence number is the most recent.
         Due to network delays, system restarts, OS hibernation, etc, it is
-        possible that thousands of additional resolutions may have taken
-        place by the time this method is invoked.        
+        possible that thousands of additional resolutions may have taken place
+        by the time this method is invoked.
         '''
 
     def onHeartbeat(self, data):
@@ -532,23 +531,23 @@ class BasicNode (JSONResponder):
         return {}
 
     
-    def currentInstanceNum(self):
+    def getCurrentSequenceNumber(self):
         '''
-        Returns the instance number this node believes is the current instance
-        under negotiation. This may or not be the true current instance number.
+        Returns the sequence number for the multi-paxos instance this node
+        believes is currently under negotiation. This may or not be the true
+        current sequence number.
         '''
         return self.mpax.instance_num
 
     
-    def slewSequenceNumber(self, new_sequence_number):
+    def setCurrentSequenceNumber(self, new_sequence_number):
         '''
-        Sets the current instance number to the new value. This may be used
-        by subclasses to advance an out-of-date node to the current Paxos
-        instance. Great care must be taken when using this method, however.
-        If state from the previous Paxos instances is of importance, the
-        subclass must ensure that it has completely caught up with its
-        peers and is ready to engage in negotiation of the new sequence
-        number.
+        Sets the current sequence number to the new value. This may be used by
+        subclasses to advance an out-of-date node to the current Paxos
+        instance. Great care must be taken when using this method, however.  If
+        state from the previous Paxos instances is of importance, the subclass
+        must ensure that it has completely caught up with its peers and is
+        ready to engage in negotiation of the new sequence number.
         '''
         assert new_sequence_number > self.sequence_number
 
@@ -594,9 +593,11 @@ class BasicNode (JSONResponder):
         if self.delayed_prepare is not None and self.delayed_prepare.active():
             self.delayed_prepare.cancel()
         self.pax_rep.close()
-        self.pax_rep = None
         self.pax_pub.close()
         self.pax_sub.close()
+        self.pax_rep = None
+        self.pax_pub = None
+        self.pax_sub = None
         if self.heartbeat_poller.running:
             self.heartbeat_poller.stop()
         if self.heartbeat_pulser.running:
@@ -605,14 +606,14 @@ class BasicNode (JSONResponder):
 
     def checkSequence(self, header):
         '''
-        Checks the sequence number of the header. If our sequence number is behind,
-        it calls onBehindInSequence().
+        Checks the sequence number of the header. If the instance's current
+        sequence number is behind, onBehindInSequence() is called.
 
-        The return value is True if the header's squence number matches our own and
-        False otherwise. If False is returned, the message will be considered invalid
-        and will not be processed. Overloading this method and artificially returning
-        False may be used by subclasses to temporarily disable participation in
-        Paxos messaging.
+        The return value is True if the header's squence number matches this
+        node's and False otherwise. If False is returned, the message will be
+        considered invalid and will not be processed. Overloading this method
+        and artificially returning False may be used by subclasses to
+        temporarily disable participation in Paxos messaging.
         '''
         seq = header['seq_num']
         
@@ -624,11 +625,11 @@ class BasicNode (JSONResponder):
 
     def changeQuorumSize(self, new_quorum_size):
         '''
-        Changes the quorum size to the new value. Note that this should only be
-        done by all nodes at approximately the same time to ensure consistency.
-        A simple way to ensure correctness is to use the Paxos algorithm itself
-        to choose the new quorum size (along with the corresponding configuration
-        information for the added and or removed nodes)
+        Changes the quorum size to the new value. Note that this should be done
+        by all nodes at approximately the same time to ensure consistency.  A
+        simple way to ensure correctness is to use the Paxos algorithm itself
+        to choose the new quorum size (along with the corresponding
+        configuration information for the added and or removed nodes)
         '''
         self.mpax.change_quorum_size( new_quorum_size )
 
@@ -785,7 +786,6 @@ class BasicNode (JSONResponder):
                                        tuple(pax[0]),
                                        tuple(pax[1]) if pax[1] else None, pax[2])
             if r and r[1] is not None:
-                #print self.node_uid, 'sending accept', r
                 self._paxos_send_accept( *r )
             
 
@@ -820,12 +820,10 @@ class BasicNode (JSONResponder):
 
     def _SUB_value_accepted(self, header):
         if self.checkSequence(header):
-            self.slewSequenceNumber(self.sequence_number + 1)
+            self.setCurrentSequenceNumber(self.sequence_number + 1)
             self._on_proposal_resolution(header['seq_num'], header['value'])
             
             
-        
-
     def _paxos_send_prepare(self, proposal_id):
         #
         # To reduce the potential for leadership battles, we'll introduce a
@@ -844,9 +842,9 @@ class BasicNode (JSONResponder):
 
         
     def _paxos_send_accept(self, proposal_id, proposal_value):
-        retrying = self.accept_retry and self.accept_retry.active()
+        outstanding_retry = self.accept_retry and self.accept_retry.active()
         
-        if self.mpax.have_leadership() and not retrying:
+        if self.mpax.have_leadership() and not outstanding_retry:
             self._publish( 'paxos_accept', {}, [proposal_id, proposal_value] )
 
             retry_delay = self.mpax.node.proposer.hb_period
