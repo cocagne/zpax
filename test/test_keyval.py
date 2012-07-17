@@ -43,6 +43,7 @@ class TestReq(tzmq.ZmqReqSocket):
     last_val = None
     
     def propose(self, key, value):
+        self.linger=0
         return self.jsend(type='propose_value', key=key, value=value)
 
     def query(self, key):
@@ -299,6 +300,8 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield c.propose('foo1', 'bar')
 
+        self.assertTrue( self.nodes['a'].kv_node.mpax.node.proposer.value is not None )
+
         self.stop('a')
 
         yield delay(0.05)
@@ -445,8 +448,7 @@ class KeyValueDBTester(unittest.TestCase):
 
 
 
-#class SqliteDBTest(unittest.TestCase):
-class Foo:
+class SqliteDBTest(unittest.TestCase):
 
     def setUp(self):
         self.db = keyval.SqliteDB(':memory:')

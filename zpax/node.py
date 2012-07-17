@@ -580,6 +580,8 @@ class BasicNode (JSONResponder):
         if self.value_key:
             value = _encrypt_value( self.value_key, value )
 
+        self.mpax.node.proposer.set_proposal( value )
+        
         self.proposal_advocate.set_proposal(self.node_uid,
                                             self.sequence_number,
                                             value)

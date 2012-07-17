@@ -51,6 +51,7 @@ class TestKV (simple.SimpleNode):
 class TestReq(tzmq.ZmqReqSocket):
 
     def jsend(self, **kwargs):
+        self.linger=0
         self.send( json.dumps(kwargs) )
 
     def messageReceived(self, parts):
