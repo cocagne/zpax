@@ -14,8 +14,6 @@ class SimpleNode (node.BasicNode):
     values to be chosen via a Router socket. The Pub/Sub Paxos
     messaging is handled by node.BasicNode.
     '''
-
-    chatty = False
     
     def __init__(self, node_uid,
                  local_rtr_addr,
@@ -36,45 +34,28 @@ class SimpleNode (node.BasicNode):
         
         self.router.bind(self.local_rtr_addr)
 
-
         
     def onShutdown(self):
         self.router.close()
 
         
-    def onLeadershipAcquired(self):
-        if self.chatty:
-            print self.node_uid, 'I have the leader!', self.mpax.node.proposer.value
-
-
-    def onLeadershipLost(self):
-        if self.chatty:
-            print self.node_uid, 'I LOST the leader!'
-
-
-    def onLeadershipChanged(self, prev_leader_uid, new_leader_uid):
-        if self.chatty:
-            print '*** Change of guard: ', prev_leader_uid, new_leader_uid
-
-
     def onBehindInSequence(self, old_sequence_number, new_sequence_number):
         self.publish( 'get_value' )
 
         
     def onProposalResolution(self, instance_num, value):
-        if self.chatty:
-            print '*** Resolution! ', instance_num, repr(value)
-        
         for addr in self.waiting_clients:
             self.reply_value(addr)
 
         self.waiting_clients.clear()
         
 
-    #----------------------------
+    #--------------------------------------------------------------------------
     # Additional PubSub Messaging
     #
-
+    # For catching up with the current value, we'll take the simple and
+    # inefficient approach of using the node.BasicNode's PUB/SUB sockets.
+    #
     def publish_value(self):
         self.publish( 'value', dict(value=self.value) )
 
@@ -89,11 +70,23 @@ class SimpleNode (node.BasicNode):
             self.slewSequenceNumber(header['seq_num'])
 
             
-    #-------------------------------
+    #--------------------------------------------------------------------------
     # Router Socket Messaging
     #
+    # ZeroMQ Router sockets prepend the message with the reply address and an
+    # empty message part. The _on_router_received method extracts the address
+    # and uses the same message dispatching logic as JSONResponder.
+    #
+    def reply(self, addr, *parts):
+        jparts = [ json.dumps(p) for p in parts ]
+        self.router.send( addr, '', *jparts )
+
+        
+    def reply_value(self, addr):
+        self.reply(addr, dict(sequence_number=self.sequence_number-1, value=self.value) )
+
+        
     def _on_router_received(self, msg_parts):
-        #print 'Router Rec: ', msg_parts
         try:
             addr  = msg_parts[0]
             parts = [ json.loads(p) for p in msg_parts[2:] ]
@@ -105,38 +98,25 @@ class SimpleNode (node.BasicNode):
             print 'Missing message type', parts
             return
 
-        fobj = getattr(self, '_on_router_' + parts[0]['type'], None)
+        fobj = getattr(self, '_ROUTER_' + parts[0]['type'], None)
         
         if fobj:
             fobj(addr, *parts)
 
-            
-    def reply(self, addr, *parts):
-        jparts = [ json.dumps(p) for p in parts ]
-        self.router.send( addr, '', *jparts )
-
         
-    def reply_value(self, addr):
-        self.reply(addr, dict(sequence_number=self.sequence_number-1, value=self.value) )
-
-        
-    def _on_router_propose_value(self, addr, header):
+    def _ROUTER_propose_value(self, addr, header):
         try:
-            if self.chatty:
-                print "Proposing value: ", self.sequence_number, header['value']
             self.proposeValue(header['value'], header['sequence_number'])
             self.reply(addr, dict(proposed=True))
         except node.ProposalFailed, e:
-            if self.chatty:
-                print 'Proposal FAILED: ', str(e)
             self.reply(addr, dict(proposed=False, message=str(e)))
 
             
-    def _on_router_query_value(self, addr, header):
+    def _ROUTER_query_value(self, addr, header):
         self.reply_value(addr)
 
         
-    def _on_router_get_next_value(self, addr, header):
+    def _ROUTER_get_next_value(self, addr, header):
         if header['sequence_number'] < self.sequence_number:
             self.reply_value(addr)
         else:
