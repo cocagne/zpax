@@ -1,2 +1,37 @@
-       
 
+Want to completely separate all ZMQ / Messaging stuff from Paxos stuff.
+
+Message handling:
+
+   Network class handles connections and message send/recv.
+      * Each node connects to pub-sub bus
+      * Each node provides a Rep socket
+      * Req connections to the Rep sockets: Always or On Demand?
+      * Messages sent to None go over pub/sub
+      * Messages sent to uid go over req/rep
+
+      * Message dispatch is done via function object
+
+
+
+   Use a Mixin class to provide the ZMQ node with Message generation and
+   dispatching support.
+
+   class JSONMessenger (object):
+
+       def __init__(self, network):
+          self.net = netowrk
+          self.net.setDispatcher(self)
+
+       def send_accept(*args):
+          self.net.send_message( json.encode(...) )
+
+       def dispatch_message( parts ):
+          getattr( self, 'on_msg_' + parts[0]['type'] )( *decoded_parts ))
+
+Network:
+
+  Isolate all socket-handling within single class. Connection to nodes
+  via pub/sub and req/rep to current leader.
+
+  Mixin classes provide the send/recv functions
