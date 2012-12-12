@@ -1,13 +1,6 @@
-import os
-import json
-import random
-import hashlib
-import hmac
-import base64
+from twisted.internet import defer, task, reactor
 
 from zpax import tzmq
-
-from twisted.internet import defer, task, reactor
 
 
 
@@ -23,7 +16,7 @@ class NetworkNode (object):
         self.pax_rtr          = None
         self.pax_pub          = None
         self.pax_sub          = None
-        self.dispatch_message = lambda x: None
+        self.dispatch_message = lambda x, y: None
         
 
     def connect(self, zpax_nodes, recv_self_broadcast=True):
