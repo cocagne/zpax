@@ -2,6 +2,10 @@ import os
 import os.path
 import sys
 
+from twisted.internet import reactor, defer
+from twisted.trial import unittest
+
+
 pd = os.path.dirname
 
 this_dir = pd(os.path.abspath(__file__))
@@ -11,8 +15,7 @@ sys.path.append( pd(this_dir) )
 
 from zpax import net
 
-from twisted.internet import reactor, defer
-from twisted.trial import unittest
+import testhelper
 
 
 def delay(t):
@@ -20,29 +23,48 @@ def delay(t):
     reactor.callLater(t, lambda : d.callback(None) )
     return d
 
-
-
     
 all_nodes = 'A B C'.split()
 
 
-class NetworkNodeTester(unittest.TestCase):
+class NetworkNodeTesterBase(object):
+
+    NodeKlass  = None
+    need_delay = False
 
     def setUp(self):
+        self._pre_setup()
+        
         self.nodes = dict()
         
         for node_uid in all_nodes:
-            self.nodes[ node_uid ] = net.NetworkNode( node_uid )
+            self.nodes[ node_uid ] = self.NodeKlass( node_uid )
+
+        return self._setup()
 
     
     def tearDown(self):
         for n in self.nodes.itervalues():
             n.shutdown()
-            
-        # In ZeroMQ 2.1.11 there is a race condition for socket deletion
-        # and recreation that can render sockets unusable. We insert
-        # a short delay here to prevent the condition from occuring.
-        return delay(0.05)
+
+        return self._teardown()
+
+
+    def _pre_setup(self):
+        pass
+    
+    def _setup(self):
+        pass
+
+    def _teardown(self):
+        pass
+
+
+    def delay(self, t):
+        if self.need_delay:
+            return delay(t)
+        else:
+            return defer.succeed(None)
 
         
     def connect(self, recv_self=True):
@@ -60,7 +82,7 @@ class NetworkNodeTester(unittest.TestCase):
     def test_unicast_connections(self):
         self.connect()
         
-        yield delay(1) # wait for connections to establish
+        yield self.delay(1) # wait for connections to establish
 
         msgs = dict()
         
@@ -83,7 +105,7 @@ class NetworkNodeTester(unittest.TestCase):
         s('C', 'A', 'AC')
         s('C', 'B', 'CB')
 
-        yield delay(0.05) # process messages
+        yield self.delay(0.05) # process messages
 
         for l in msgs.itervalues():
             l.sort()
@@ -99,7 +121,7 @@ class NetworkNodeTester(unittest.TestCase):
     def test_broadcast_connections_no_recv_self(self):
         self.connect(False)
         
-        yield delay(1) # wait for connections to establish
+        yield self.delay(1) # wait for connections to establish
 
         msgs = dict()
         
@@ -119,7 +141,7 @@ class NetworkNodeTester(unittest.TestCase):
         s('B', 'msgB')
         s('C', 'msgC')
 
-        yield delay(0.05) # process messages
+        yield self.delay(0.05) # process messages
 
         for l in msgs.itervalues():
             l.sort()
@@ -135,7 +157,7 @@ class NetworkNodeTester(unittest.TestCase):
     def test_broadcast_connections_recv_self(self):
         self.connect()
         
-        yield delay(1) # wait for connections to establish
+        yield self.delay(1) # wait for connections to establish
 
         msgs = dict()
         
@@ -155,7 +177,7 @@ class NetworkNodeTester(unittest.TestCase):
         s('B', 'msgB')
         s('C', 'msgC')
 
-        yield delay(0.05) # process messages
+        yield self.delay(0.05) # process messages
 
         for l in msgs.itervalues():
             l.sort()
@@ -166,4 +188,24 @@ class NetworkNodeTester(unittest.TestCase):
 
         self.assertEquals( msgs, expected )
 
+
+
+class ZeroMQNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
+
+    NodeKlass  = net.NetworkNode
+    need_delay = True
+
+    def _teardown(self):
+        # In ZeroMQ 2.1.11 there is a race condition for socket deletion
+        # and recreation that can render sockets unusable. We insert
+        # a short delay here to prevent the condition from occuring.
+        return delay(0.05)
     
+    
+
+class TestHelperNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
+
+    NodeKlass      = testhelper.NetworkNode
+
+    def _pre_setup(self):
+        testhelper.setup()
