@@ -3,6 +3,14 @@ from twisted.internet import defer, task, reactor
 from zpax import tzmq
 
 
+class SimpleEncoder(object):
+    def encode(self, node_uid, message_type, parts):
+        return ['{0}\0{1}'.format(node_uid, message_type)] + list(parts)
+
+    def decode(self, parts):
+        from_uid, message_type = parts[0].split('\0')
+        return from_uid, message_type, parts[1:]
+    
 
 class NetworkNode (object):
 
@@ -16,6 +24,7 @@ class NetworkNode (object):
         self.pax_rtr          = None
         self.pax_pub          = None
         self.pax_sub          = None
+        self.encoder          = SimpleEncoder()
         self.dispatch_message = lambda x, y: None
         
 
@@ -71,25 +80,31 @@ class NetworkNode (object):
         self.pax_sub = None
 
 
-    def broadcast_message(self, *parts):
+    def broadcast_message(self, message_type, *parts):
         if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
             parts = parts[0]
         l = ['zpax']
-        l.extend(parts)
+        l.extend( self.encoder.encode(self.node_uid, message_type, parts) )
         self.pax_pub.send( l )
 
 
-    def unicast_message(self, node_uid, *parts):
+    def unicast_message(self, node_uid, message_type, *parts):
         if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
             parts = parts[0]
         l = [node_uid]
-        l.extend(parts)
+        l.extend( self.encoder.encode(self.node_uid, message_type, parts) )
         self.pax_rtr.send( l )
 
 
-    def _on_rtr_received(self, parts):
-        self.dispatch_message( parts[0], parts[1:] )
+    def _on_rtr_received(self, raw_parts):
+        # discard source address. We'll use the one embedded in the message
+        # for consistency
+        from_uid, message_type, parts = self.encoder.decode( raw_parts[1:] )
+        self.dispatch_message( from_uid, message_type, parts )
 
 
-    def _on_sub_received(self, parts):
-        self.dispatch_message( None, parts[1:] )
+    def _on_sub_received(self, raw_parts):
+        # discard the message header. Can address targeted subscriptions
+        # later
+        from_uid, message_type, parts = self.encoder.decode( raw_parts[1:] )
+        self.dispatch_message( from_uid, message_type, parts )

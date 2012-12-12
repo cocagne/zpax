@@ -87,8 +87,8 @@ class NetworkNodeTesterBase(object):
         msgs = dict()
         
         def gend( nid ):
-            def md( from_uid, parts ):
-                msgs[ nid ].append( (from_uid, parts) )
+            def md( from_uid, msg_type, parts ):
+                msgs[ nid ].append( (from_uid, msg_type, parts) )
             return md
 
         for n in all_nodes:
@@ -96,7 +96,7 @@ class NetworkNodeTesterBase(object):
             self.nodes[n].dispatch_message = gend(n)
             
         def s(src, dst, msg):
-            self.nodes[src].unicast_message(dst, msg)
+            self.nodes[src].unicast_message(dst, 'foomsg', msg)
 
         s('A', 'B', 'AB')
         s('A', 'C', 'AC')
@@ -110,9 +110,9 @@ class NetworkNodeTesterBase(object):
         for l in msgs.itervalues():
             l.sort()
 
-        expected = {'A': [('B', ['BA']), ('C', ['AC'])],
-                    'B': [('A', ['AB']), ('C', ['CB'])],
-                    'C': [('A', ['AC']), ('B', ['BC'])]}
+        expected = {'A': [('B', 'foomsg', ['BA']), ('C', 'foomsg', ['AC'])],
+                    'B': [('A', 'foomsg', ['AB']), ('C', 'foomsg', ['CB'])],
+                    'C': [('A', 'foomsg', ['AC']), ('B', 'foomsg', ['BC'])]}
 
         self.assertEquals( msgs, expected )
 
@@ -126,8 +126,8 @@ class NetworkNodeTesterBase(object):
         msgs = dict()
         
         def gend( nid ):
-            def md( from_uid, parts ):
-                msgs[ nid ].append( (from_uid, parts) )
+            def md( from_uid, msg_type, parts ):
+                msgs[ nid ].append( (from_uid, msg_type, parts) )
             return md
 
         for n in all_nodes:
@@ -135,7 +135,7 @@ class NetworkNodeTesterBase(object):
             self.nodes[n].dispatch_message = gend(n)
             
         def s(src, msg):
-            self.nodes[src].broadcast_message(msg)
+            self.nodes[src].broadcast_message('foomsg', msg)
 
         s('A', 'msgA')
         s('B', 'msgB')
@@ -146,9 +146,9 @@ class NetworkNodeTesterBase(object):
         for l in msgs.itervalues():
             l.sort()
 
-        expected = {'A': [(None, ['msgB']), (None, ['msgC'])],
-                    'B': [(None, ['msgA']), (None, ['msgC'])],
-                    'C': [(None, ['msgA']), (None, ['msgB'])]}
+        expected = {'A': [('B', 'foomsg', ['msgB']), ('C', 'foomsg', ['msgC'])],
+                    'B': [('A', 'foomsg', ['msgA']), ('C', 'foomsg', ['msgC'])],
+                    'C': [('A', 'foomsg', ['msgA']), ('B', 'foomsg', ['msgB'])]}
 
         self.assertEquals( msgs, expected )
 
@@ -162,8 +162,8 @@ class NetworkNodeTesterBase(object):
         msgs = dict()
         
         def gend( nid ):
-            def md( from_uid, parts ):
-                msgs[ nid ].append( (from_uid, parts) )
+            def md( from_uid, msg_type, parts ):
+                msgs[ nid ].append( (from_uid, msg_type, parts) )
             return md
 
         for n in all_nodes:
@@ -171,7 +171,7 @@ class NetworkNodeTesterBase(object):
             self.nodes[n].dispatch_message = gend(n)
             
         def s(src, msg):
-            self.nodes[src].broadcast_message(msg)
+            self.nodes[src].broadcast_message('foomsg', msg)
 
         s('A', 'msgA')
         s('B', 'msgB')
@@ -182,9 +182,10 @@ class NetworkNodeTesterBase(object):
         for l in msgs.itervalues():
             l.sort()
 
-        expected = {'A': [(None, ['msgA']), (None, ['msgB']), (None, ['msgC'])],
-                    'B': [(None, ['msgA']), (None, ['msgB']), (None, ['msgC'])],
-                    'C': [(None, ['msgA']), (None, ['msgB']), (None, ['msgC'])]}
+        expected = {'A': [('A', 'foomsg', ['msgA']), ('B', 'foomsg', ['msgB']), ('C', 'foomsg', ['msgC'])],
+                    'B': [('A', 'foomsg', ['msgA']), ('B', 'foomsg', ['msgB']), ('C', 'foomsg', ['msgC'])],
+                    'C': [('A', 'foomsg', ['msgA']), ('B', 'foomsg', ['msgB']), ('C', 'foomsg', ['msgC'])]}
+
 
         self.assertEquals( msgs, expected )
 
@@ -203,8 +204,8 @@ class ZeroMQNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
     
     
 
-class TestHelperNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
-
+#class TestHelperNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
+class Foo:
     NodeKlass      = testhelper.NetworkNode
 
     def _pre_setup(self):
