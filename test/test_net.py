@@ -205,7 +205,7 @@ class ZeroMQNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
     
 
 class TestHelperNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
-#class Foo:
+    
     NodeKlass      = testhelper.NetworkNode
 
     def _pre_setup(self):
