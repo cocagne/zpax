@@ -87,12 +87,8 @@ class ProposalAdvocate (object):
 
 
 
-
-
         
 class MultiPaxosNode(object):
-
-    PaxosNodeClass = None
 
     def __init__(self, net_node, quorum_size):
         self.net         = net_node
@@ -101,6 +97,11 @@ class MultiPaxosNode(object):
         self.leader_uid  = None
         self.pax         = None
         self.advocate    = ProposalAdvocate(self)
+
+        self.instance_exceptions  = set() # message types that should be processed
+                                          # even if the instance number is not current
+                                          
+        self.net.dispatch_message = self.dispatch_message
 
         self.next_instance()
         
@@ -127,14 +128,103 @@ class MultiPaxosNode(object):
         self.pax       = self._new_paxos_node()
 
 
-    def broadcast_message(self, msg_type, **kwargs):
-        self.net.broadcast_message(msg_type, self.instance, kwargs)
+    def broadcast(self, msg_type, **kwargs):
+        kwargs.update( dict(instance=self.instance) )
+        self.net.broadcast_message(msg_type, kwargs)
 
+        
+    def unicast(self, dest_uid, msg_type, **kwargs):
+        kwargs.update( dict(instance=self.instance) )
+        self.net.unicast_message(msg_type, kwargs)
+
+
+    def dispatch_message(self, from_uid, msg_type, parts):
+        if len(parts) != 1:
+            print 'Invalid message: parts length'
+            return
+        
+        kwargs = parts[0]
+
+        if kwargs['instance'] != self.instance and not msg_type in self.instance_exceptions:
+            return # Old message
+
+        f = getattr(self, 'receive_' + msg_type, None)
+
+        if f:
+            f(from_uid, kwargs)
+        
 
     def send_proposal_to_leader(self, proposal_id, proposal_value):
         if self.leader_uid is not None:
-            
-            self.net.unicast_message( self.leader_uid, 'set_proposal', proposal_id, proposal_value
+            self.unicast( self.leader_uid, 'set_proposal',
+                          proposal_id    = proposal_id,
+                          proposal_value = proposal_value )
+
+    #------------------------------------------------------------------
+    #
+    # Messenger interface required by paxos.node.Node
+    #
+    #------------------------------------------------------------------
+
+    def send_prepare(self, proposer_obj, proposal_id):
+        self.broadcast( 'prepare', proposal_id = proposal_id )
+
+        
+    def receive_prepare(self, from_uid, kw):
+        self.pax.recv_prepare( kw['proposal_id'] )
+        
+
+    def send_promise(self, proposer_obj, proposal_id, previous_id, accepted_value):
+        self.broadcast( 'promise', proposal_id    = proposal_id,
+                                   previous_id    = previous_id,
+                                   accepted_value = accepted_value )
+
+    def receive_promise(self, from_uid, kw):
+        self.pax.recv_promise( from_uid, kw['proposal_id'], kw['previous_id'],
+                               kw['accepted_value'] )
+
+        
+    def send_prepare_nack(self, propser_obj, proposal_id):
+        self.broadcast( 'prepare_nack', proposal_id = proposal_id )
+
+        
+    def receive_prepare_nack(self, from_uid, kw):
+        self.pax.recv_prepare_nack( kw['proposal_id'] )
+
+        
+    def send_accept(self, proposer_obj, proposal_id, proposal_value):
+        self.broadcast( 'accept', proposal_id    = proposal_id,
+                                  proposal_value = proposal_value )
+
+        
+    def receive_accept(self, from_uid, kw):
+        self.pax.recv_accept( kw['proposal_id'], kw['value'] )
+
+        
+    def send_accept_nack(self, proposer_obj, proposal_id, promised_id):
+        self.broadcast( 'accept_nack', proposal_id = proposal_id
+                                       promised_id = promised_id )
+
+
+    def receive_accept_nack(self, from_uid, kw):
+        self.pax.recv_accept_nack( from_uid, kw['proposal_id'], kw['promised_id'] )
+        
+
+    def send_accepted(self, proposer_obj, proposal_id, accepted_value):
+        self.broadcast( 'accepted', proposal_id    = proposal_id,
+                                    accepted_value = accepted_value )
+
+        
+    def receive_accepted(self, from_uid, kw):
+        self.pax.recv_accepted( from_uid, kw['proposal_id'], kw['accepted_value'] )
+
+        
+    def on_leadership_acquired(self, proposer_obj):
+        pass
+
+    
+    def on_resolution(self, proposer_obj, proposal_id, value):
+        self.next_instance()
 
 
 
@@ -185,16 +275,18 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
     #
     #------------------------------------------------------------
 
+    
     def send_heartbeat(self, node_obj, leader_proposal_id):
         '''
         Sends a heartbeat message to all nodes
         '''
-        self.net.broadcast_message( 'heartbeat', self.instance, leader_proposal_id )
+        self.broadcast( 'heartbeat', leader_proposal_id = leader_proposal_id )
         
 
     def schedule(self, node_obj,  msec_delay, func_obj):
         pass # we use Twisted's task.LoopingCall mechanism instead
 
+        
     def on_leadership_lost(self, node_obj):
         '''
         Called when loss of leadership is detected
@@ -202,6 +294,7 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         if self.leader_pulse_task.running:
             self.leader_pulse_task.stop()
 
+            
     def on_leadership_change(self, node_obj, prev_leader_uid, new_leader_uid):
         '''
         Called when a change in leadership is detected
