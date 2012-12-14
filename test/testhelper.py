@@ -42,7 +42,8 @@ class NetworkNode (object):
         
 
     def shutdown(self):
-        del nodes[ self.node_uid ]
+        if self.node_uid in nodes:
+            del nodes[ self.node_uid ]
 
 
     def broadcast_message(self, message_type, *parts):

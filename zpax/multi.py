@@ -131,7 +131,7 @@ class MultiPaxosNode(object):
 
     @property
     def node_uid(self):
-        self.net.node_uid
+        return self.net.node_uid
 
     
     def next_instance(self, set_instance_to=None):
@@ -252,7 +252,7 @@ class MultiPaxosNode(object):
 
         
     def send_accept_nack(self, proposer_obj, proposal_id, promised_id):
-        self.broadcast( 'accept_nack', proposal_id = proposal_id
+        self.broadcast( 'accept_nack', proposal_id = proposal_id,
                                        promised_id = promised_id )
 
 
