@@ -11,11 +11,11 @@ from zpax import tzmq
 class ProposalFailed(Exception):
     pass
 
-class SequenceMismatch(ProposalFailed):
+class InstanceMismatch(ProposalFailed):
 
     def __init__(self, current):
-        super(SequenceMismatch,self).__init__('Sequence Number Mismatch')
-        self.current_seq_num = current
+        super(InstanceMismatch,self).__init__('Instance Number Mismatch')
+        self.current_instance = current
 
 class ValueAlreadyProposed(ProposalFailed):
     
@@ -35,25 +35,33 @@ class ProposalAdvocate (object):
         '''
         retry_delay - Floating point delay in seconds between retry attempts
         '''
-        self.mnode       = mnode
-        self.proposal    = None
-        self.proposal_id = None
-        self.retry_cb    = None
+        self.mnode      = mnode
+        self.proposal   = None
+        self.request_id = None
+        self.retry_cb   = None
 
         
     def cancel(self):
         '''
         Called at:
            * Application shutdown
-           * On reception of an Accept! from the current leader
            * On instance resolution & prior to switching to the next instance
         '''
         if self.retry_cb and self.retry_cb.active():
             self.retry_cb.cancel()
             
-        self.retry_cb    = None
-        self.proposal    = None
-        self.proposal_id = None
+        self.retry_cb   = None
+        self.proposal   = None
+        self.request_id = None
+
+        
+    def proposal_acknowledged(self, request_id):
+        '''
+        Once the current leader has been informed, we can suspend retransmits.
+        Transmitting will resume if the current leader changes.
+        '''
+        if self.request_id == request_id and self.retry_cb.active():
+            self.retry_cb.cancel()
 
         
     def leadership_changed(self):
@@ -65,12 +73,15 @@ class ProposalAdvocate (object):
         self._send_proposal()
     
 
-    def set_proposal(self, proposal_id, proposed_value):
-        if self.proposal is None:
-            self.proposal    = proposed_value
-            self.proposal_id = proposal_id
+    def set_proposal(self, request_id, proposed_value):
+        if self.request_id is None:
+            self.proposal   = proposed_value
+            self.request_id = request_id
 
             self._send_proposal()
+            
+        elif request_id != self.request_id:
+            raise ValueAlreadyProposed()
 
             
     def _send_proposal(self):
@@ -83,7 +94,7 @@ class ProposalAdvocate (object):
         self.retry_cb = self.callLater(self.retry_delay,
                                        self._send_proposal)
 
-        self.mnode.send_proposal_to_leader(self.proposal_id, self.proposal)
+        self.mnode.send_proposal_to_leader(self.request_id, self.proposal)
 
 
 
@@ -152,13 +163,36 @@ class MultiPaxosNode(object):
 
         if f:
             f(from_uid, kwargs)
+
+            
+    #------------------------------------------------------------------
+    #
+    # Proposal Management
+    #
+    #------------------------------------------------------------------
+
+    def set_proposal(self, instance, request_id, proposal_value):
+        if instance == self.instance:
+            self.advocate.set_proposal( request_id, proposal_value )
+        else:
+            raise InstanceMismatch(self.instance)
         
 
-    def send_proposal_to_leader(self, proposal_id, proposal_value):
+    def send_proposal_to_leader(self, request_id, proposal_value):
         if self.leader_uid is not None:
             self.unicast( self.leader_uid, 'set_proposal',
-                          proposal_id    = proposal_id,
+                          request_id     = request_id,
                           proposal_value = proposal_value )
+
+            
+    def receive_set_proposal(self, from_uid, kw):
+        self.advocate.set_proposal( kw['request_id'], kw['proposal_value'] )
+        self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
+        
+
+    def receive_set_proposal_ack(self, from_uid, kw):
+        if from_uid == self.leader_uid:
+            self.advocate.proposal_acknowledged( kw['request_id'] )
 
     #------------------------------------------------------------------
     #
@@ -179,6 +213,7 @@ class MultiPaxosNode(object):
                                    previous_id    = previous_id,
                                    accepted_value = accepted_value )
 
+        
     def receive_promise(self, from_uid, kw):
         self.pax.recv_promise( from_uid, kw['proposal_id'], kw['previous_id'],
                                kw['accepted_value'] )
