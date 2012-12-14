@@ -1,5 +1,4 @@
 import os
-import random
 
 from twisted.internet import defer, task, reactor
 
@@ -11,11 +10,13 @@ from zpax import tzmq
 class ProposalFailed(Exception):
     pass
 
+
 class InstanceMismatch(ProposalFailed):
 
     def __init__(self, current):
         super(InstanceMismatch,self).__init__('Instance Number Mismatch')
         self.current_instance = current
+
 
 class ValueAlreadyProposed(ProposalFailed):
     
@@ -133,20 +134,29 @@ class MultiPaxosNode(object):
         self.net.node_uid
 
     
-    def next_instance(self):
+    def next_instance(self, set_instance_to=None):
         self.advocate.cancel()
-        self.instance += 1
-        self.pax       = self._new_paxos_node()
+        
+        if set_instance_to is None:
+            self.instance += 1
+        else:
+            self.instance = set_instance_to
+            
+        self.pax = self._new_paxos_node()
 
 
     def broadcast(self, msg_type, **kwargs):
         kwargs.update( dict(instance=self.instance) )
         self.net.broadcast_message(msg_type, kwargs)
+        self.dispatch_message(self.node_uid, msg_type, [kwargs,])
 
         
     def unicast(self, dest_uid, msg_type, **kwargs):
-        kwargs.update( dict(instance=self.instance) )
-        self.net.unicast_message(msg_type, kwargs)
+        if dest_uid == self.node_uid:
+            self.dispatch_message(self.node_uid, msg_type, [kwargs,])
+        else:
+            kwargs.update( dict(instance=self.instance) )
+            self.net.unicast_message(msg_type, kwargs)
 
 
     def dispatch_message(self, from_uid, msg_type, parts):
@@ -164,6 +174,10 @@ class MultiPaxosNode(object):
         if f:
             f(from_uid, kwargs)
 
+
+    def behind_in_sequence(self, current_instance):
+        self.next_instance( set_instance_to = current_instance )
+        
             
     #------------------------------------------------------------------
     #
@@ -186,6 +200,7 @@ class MultiPaxosNode(object):
 
             
     def receive_set_proposal(self, from_uid, kw):
+        self.pax.set_proposal( (kw['request_id'], kw['proposal_value']) )
         self.advocate.set_proposal( kw['request_id'], kw['proposal_value'] )
         self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
         
@@ -259,6 +274,7 @@ class MultiPaxosNode(object):
 
     
     def on_resolution(self, proposer_obj, proposal_id, value):
+        print 'RESOLUTION: ', self.node_uid, proposer_id, value
         self.next_instance()
 
 
@@ -280,6 +296,8 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         self.leader_pulse_task = task.LoopingCall( lambda : self.pax.pulse()          )
 
         self.hb_poll_task.start( self.liveness_window )
+
+        self.instance_exceptions.add('heartbeat')
 
 
     def shutdown(self):
@@ -316,6 +334,13 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         Sends a heartbeat message to all nodes
         '''
         self.broadcast( 'heartbeat', leader_proposal_id = leader_proposal_id )
+
+
+    def receive_heartbeat(self, from_uid, kw):
+        if kw['instance'] > self.instance:
+            self.behind_in_sequence( kw['instance'] )
+        elif kw['instance'] == self.instance:
+            self.pax.recv_heartbeat( kw['leader_proposal_id'] )
         
 
     def schedule(self, node_obj,  msec_delay, func_obj):
