@@ -37,6 +37,7 @@ class ProposalAdvocate (object):
         retry_delay - Floating point delay in seconds between retry attempts
         '''
         self.mnode      = mnode
+        self.instance   = None
         self.proposal   = None
         self.request_id = None
         self.retry_cb   = None
@@ -52,6 +53,7 @@ class ProposalAdvocate (object):
             self.retry_cb.cancel()
             
         self.retry_cb   = None
+        self.instance   = None
         self.proposal   = None
         self.request_id = None
 
@@ -74,8 +76,9 @@ class ProposalAdvocate (object):
         self._send_proposal()
     
 
-    def set_proposal(self, request_id, proposed_value):
+    def set_proposal(self, instance, request_id, proposed_value):
         if self.request_id is None:
+            self.instance   = instance
             self.proposal   = proposed_value
             self.request_id = request_id
 
@@ -91,11 +94,14 @@ class ProposalAdvocate (object):
         
         if self.retry_cb and self.retry_cb.active():
             self.retry_cb.cancel()
-            
-        self.retry_cb = self.callLater(self.retry_delay,
-                                       self._send_proposal)
 
-        self.mnode.send_proposal_to_leader(self.request_id, self.proposal)
+        if self.instance == self.mnode.instance:
+            self.retry_cb = self.callLater(self.retry_delay,
+                                           self._send_proposal)
+
+            self.mnode.send_proposal_to_leader(self.instance, self.request_id, self.proposal)
+        else:
+            self.cancel()
 
 
 
@@ -152,11 +158,11 @@ class MultiPaxosNode(object):
 
         
     def unicast(self, dest_uid, msg_type, **kwargs):
+        kwargs.update( dict(instance=self.instance) )
         if dest_uid == self.node_uid:
             self.dispatch_message(self.node_uid, msg_type, [kwargs,])
         else:
-            kwargs.update( dict(instance=self.instance) )
-            self.net.unicast_message(msg_type, kwargs)
+            self.net.unicast_message(dest_uid, msg_type, kwargs)
 
 
     def dispatch_message(self, from_uid, msg_type, parts):
@@ -185,15 +191,18 @@ class MultiPaxosNode(object):
     #
     #------------------------------------------------------------------
 
-    def set_proposal(self, instance, request_id, proposal_value):
+    def set_proposal(self, request_id, proposal_value, instance=None):
+        if instance is None:
+            instance = self.instance
+            
         if instance == self.instance:
-            self.advocate.set_proposal( request_id, proposal_value )
+            self.advocate.set_proposal( instance, request_id, proposal_value )
         else:
             raise InstanceMismatch(self.instance)
         
 
-    def send_proposal_to_leader(self, request_id, proposal_value):
-        if self.leader_uid is not None:
+    def send_proposal_to_leader(self, instance, request_id, proposal_value):
+        if instance == self.instance and self.leader_uid is not None:
             self.unicast( self.leader_uid, 'set_proposal',
                           request_id     = request_id,
                           proposal_value = proposal_value )
@@ -201,7 +210,7 @@ class MultiPaxosNode(object):
             
     def receive_set_proposal(self, from_uid, kw):
         self.pax.set_proposal( (kw['request_id'], kw['proposal_value']) )
-        self.advocate.set_proposal( kw['request_id'], kw['proposal_value'] )
+        self.advocate.set_proposal( kw['instance'], kw['request_id'], kw['proposal_value'] )
         self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
         
 
@@ -248,7 +257,7 @@ class MultiPaxosNode(object):
 
         
     def receive_accept(self, from_uid, kw):
-        self.pax.recv_accept( kw['proposal_id'], kw['value'] )
+        self.pax.recv_accept_request( kw['proposal_id'], kw['proposal_value'] )
 
         
     def send_accept_nack(self, proposer_obj, proposal_id, promised_id):
@@ -274,7 +283,6 @@ class MultiPaxosNode(object):
 
     
     def on_resolution(self, proposer_obj, proposal_id, value):
-        print 'RESOLUTION: ', self.node_uid, proposer_id, value
         self.next_instance()
 
 
