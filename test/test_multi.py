@@ -100,6 +100,7 @@ class MultiTesterBase(object):
 
         yield d
 
+        
     @defer.inlineCallbacks
     def test_leader_resolution(self):
         yield self.A.dleader_acq
@@ -161,6 +162,33 @@ class MultiTesterBase(object):
         self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
                               ((1, 'A'), ('reqid', 'foobar')),
                               ((1, 'A'), ('reqid', 'foobar'))] )
+
+        
+    @defer.inlineCallbacks
+    def test_resolution_with_leadership_failure_and_isolated_node(self):
+        yield self.A.dleader_acq
+
+        d = defer.gatherResults( [self.B.dresolution,
+                                  self.C.dresolution],
+                                 consumeErrors=True )
+
+        self.A.net.link_up = False
+        self.B.net.link_up = False
+        
+        self.B.advocate.retry_delay = 0.01
+        
+        self.B.set_proposal( 'reqid', 'foobar' )
+
+        yield delay( 0.05 )
+
+        self.assertTrue( not self.A.dresolution.called )
+
+        self.B.net.link_up = True
+
+        r = yield d
+
+        self.assertEquals(r, [((1, 'B'), ('reqid', 'foobar')),
+                              ((1, 'B'), ('reqid', 'foobar'))] )
         
 
 
