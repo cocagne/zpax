@@ -111,6 +111,14 @@ class MultiTesterBase(object):
 
         yield d
 
+        self.assertTrue(self.A.pax.leader)
+        
+        self.A.net.link_up = True
+
+        yield delay(0.06)
+
+        self.assertTrue(not self.A.pax.leader)
+
         
     @defer.inlineCallbacks
     def test_leader_resolution(self):
@@ -256,14 +264,15 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
         self.assertEquals( self.A.instance, 2 )
-
-        d = gatherResults( [self.A.dresolution,
-                            self.C.dresolution] )
-
+        self.assertEquals( self.B.instance, 1 )
+        
         self.B.net.link_up = True
 
-
         yield delay(0.05)
+
+        d = gatherResults( [self.A.dresolution,
+                            self.B.dresolution,
+                            self.C.dresolution] )
                             
         
         self.A.set_proposal( 'reqid', 'baz' )
@@ -271,9 +280,11 @@ class MultiTesterBase(object):
         r = yield d
 
         self.assertEquals(r, [((1, 'A'), ('reqid', 'baz')),
+                              ((1, 'A'), ('reqid', 'baz')),
                               ((1, 'A'), ('reqid', 'baz'))] )
 
         self.assertEquals( self.A.instance, 3 )
+        self.assertEquals( self.B.instance, 3 )
         
 
 
