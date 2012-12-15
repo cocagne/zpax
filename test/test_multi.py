@@ -27,7 +27,18 @@ def delay(t):
     
 all_nodes = 'A B C'.split()
 
+try:
+    defer.gatherResults( [defer.succeed(None),], consumeErrors=True )
+    use_consume = True
+except TypeError:
+    use_consume = False
 
+def gatherResults( l ):
+    if use_consume:
+        return defer.gatherResults(l, consumeErrors=True)
+    else:
+        return defer.gatherResults(l)
+    
 
 class HBTestNode(multi.MultiPaxosHeartbeatNode):
 
@@ -105,10 +116,9 @@ class MultiTesterBase(object):
     def test_leader_resolution(self):
         yield self.A.dleader_acq
 
-        d = defer.gatherResults( [self.A.dresolution,
-                                  self.B.dresolution,
-                                  self.C.dresolution],
-                                 consumeErrors=True )
+        d = gatherResults( [self.A.dresolution,
+                            self.B.dresolution,
+                            self.C.dresolution] )
         
         self.A.set_proposal( 'reqid', 'foobar' )
 
@@ -122,10 +132,10 @@ class MultiTesterBase(object):
     def test_non_leader_resolution(self):
         yield self.A.dleader_acq
 
-        d = defer.gatherResults( [self.A.dresolution,
-                                  self.B.dresolution,
-                                  self.C.dresolution],
-                                 consumeErrors=True )
+        d = gatherResults( [self.A.dresolution,
+                            self.B.dresolution,
+                            self.C.dresolution] )
+        
         
         self.B.set_proposal( 'reqid', 'foobar' )
 
@@ -140,10 +150,9 @@ class MultiTesterBase(object):
     def test_proposal_advocate_retry(self):
         yield self.A.dleader_acq
 
-        d = defer.gatherResults( [self.A.dresolution,
-                                  self.B.dresolution,
-                                  self.C.dresolution],
-                                 consumeErrors=True )
+        d = gatherResults( [self.A.dresolution,
+                            self.B.dresolution,
+                            self.C.dresolution] )
 
         self.B.net.link_up = False
         
@@ -168,10 +177,9 @@ class MultiTesterBase(object):
     def test_resolution_with_leadership_failure_and_isolated_node(self):
         yield self.A.dleader_acq
 
-        d = defer.gatherResults( [self.B.dresolution,
-                                  self.C.dresolution],
-                                 consumeErrors=True )
-
+        d = gatherResults( [self.B.dresolution,
+                            self.C.dresolution] )
+                           
         self.A.net.link_up = False
         self.B.net.link_up = False
         
@@ -189,6 +197,83 @@ class MultiTesterBase(object):
 
         self.assertEquals(r, [((1, 'B'), ('reqid', 'foobar')),
                               ((1, 'B'), ('reqid', 'foobar'))] )
+
+
+    @defer.inlineCallbacks
+    def test_multiple_instances(self):
+        yield self.A.dleader_acq
+
+        self.assertEquals( self.A.instance, 1 )
+
+        d = gatherResults( [self.A.dresolution,
+                            self.B.dresolution,
+                            self.C.dresolution] )
+                            
+        
+        self.A.set_proposal( 'reqid', 'foobar' )
+
+        r = yield d
+
+        self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
+                              ((1, 'A'), ('reqid', 'foobar')),
+                              ((1, 'A'), ('reqid', 'foobar'))] )
+
+        self.assertEquals( self.A.instance, 2 )
+
+        d = gatherResults( [self.A.dresolution,
+                            self.B.dresolution,
+                            self.C.dresolution] )
+                            
+        
+        self.A.set_proposal( 'reqid', 'baz' )
+
+        r = yield d
+
+        self.assertEquals(r, [((1, 'A'), ('reqid', 'baz')),
+                              ((1, 'A'), ('reqid', 'baz')),
+                              ((1, 'A'), ('reqid', 'baz'))] )
+
+        self.assertEquals( self.A.instance, 3 )
+
+
+    @defer.inlineCallbacks
+    def test_behind_in_sequence(self):
+        yield self.A.dleader_acq
+
+        self.assertEquals( self.A.instance, 1 )
+
+        self.B.net.link_up = False
+
+        d = gatherResults( [self.A.dresolution,
+                            self.C.dresolution] )
+                            
+        
+        self.A.set_proposal( 'reqid', 'foobar' )
+
+        r = yield d
+
+        self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
+                              ((1, 'A'), ('reqid', 'foobar'))] )
+
+        self.assertEquals( self.A.instance, 2 )
+
+        d = gatherResults( [self.A.dresolution,
+                            self.C.dresolution] )
+
+        self.B.net.link_up = True
+
+
+        yield delay(0.05)
+                            
+        
+        self.A.set_proposal( 'reqid', 'baz' )
+
+        r = yield d
+
+        self.assertEquals(r, [((1, 'A'), ('reqid', 'baz')),
+                              ((1, 'A'), ('reqid', 'baz'))] )
+
+        self.assertEquals( self.A.instance, 3 )
         
 
 
