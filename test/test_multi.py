@@ -137,6 +137,30 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
     @defer.inlineCallbacks
+    def test_accept_nack(self):
+        yield self.A.dleader_acq
+
+        d = gatherResults( [self.A.dresolution,
+                            self.B.dresolution,
+                            self.C.dresolution] )
+
+        self.A.net.link_up = False
+        
+        self.A.set_proposal( 'reqid', 'foobar' )
+
+        self.assertEquals( self.A.pax.next_proposal_number, 2 )
+        self.assertTrue( self.A.pax.leader )
+
+        self.A.receive_accept_nack( 'B', dict(proposal_id=self.A.pax.proposal_id,
+                                              promised_id=(2, 'B')))
+        self.A.receive_accept_nack( 'C', dict(proposal_id=self.A.pax.proposal_id,
+                                              promised_id=(2, 'B')))
+
+        self.assertEquals( self.A.pax.next_proposal_number, 3 )
+        self.assertTrue( not self.A.pax.leader )
+
+        
+    @defer.inlineCallbacks
     def test_non_leader_resolution(self):
         yield self.A.dleader_acq
 
@@ -203,8 +227,10 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertEquals(r, [((1, 'B'), ('reqid', 'foobar')),
-                              ((1, 'B'), ('reqid', 'foobar'))] )
+        self.assertTrue(r in ( [((1, 'B'), ('reqid', 'foobar')),
+                                ((1, 'B'), ('reqid', 'foobar'))],
+                               [((1, 'C'), ('reqid', 'foobar')),
+                                ((1, 'C'), ('reqid', 'foobar'))]) )
 
 
     @defer.inlineCallbacks
