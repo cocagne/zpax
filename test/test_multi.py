@@ -132,9 +132,9 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar'))] )
+        self.assertEquals(r, [((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar')] )
 
     @defer.inlineCallbacks
     def test_accept_nack(self):
@@ -173,9 +173,9 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar'))] )
+        self.assertEquals(r, [((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar')] )
 
 
     @defer.inlineCallbacks
@@ -200,9 +200,9 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar'))] )
+        self.assertEquals(r, [((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar')] )
 
         
     @defer.inlineCallbacks
@@ -227,10 +227,10 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertTrue(r in ( [((1, 'B'), ('reqid', 'foobar')),
-                                ((1, 'B'), ('reqid', 'foobar'))],
-                               [((1, 'C'), ('reqid', 'foobar')),
-                                ((1, 'C'), ('reqid', 'foobar'))]) )
+        self.assertTrue(r in ( [((1, 'B'), 'foobar'),
+                                ((1, 'B'), 'foobar')],
+                               [((1, 'C'), 'foobar'),
+                                ((1, 'C'), 'foobar')]) )
 
 
     @defer.inlineCallbacks
@@ -248,9 +248,9 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar'))] )
+        self.assertEquals(r, [((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar')] )
 
         self.assertEquals( self.A.instance, 2 )
 
@@ -263,9 +263,9 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertEquals(r, [((1, 'A'), ('reqid', 'baz')),
-                              ((1, 'A'), ('reqid', 'baz')),
-                              ((1, 'A'), ('reqid', 'baz'))] )
+        self.assertEquals(r, [((1, 'A'), 'baz'),
+                              ((1, 'A'), 'baz'),
+                              ((1, 'A'), 'baz')] )
 
         self.assertEquals( self.A.instance, 3 )
 
@@ -286,8 +286,8 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
-                              ((1, 'A'), ('reqid', 'foobar'))] )
+        self.assertEquals(r, [((1, 'A'), 'foobar'),
+                              ((1, 'A'), 'foobar')] )
 
         self.assertEquals( self.A.instance, 2 )
         self.assertEquals( self.B.instance, 1 )
@@ -305,9 +305,9 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertEquals(r, [((1, 'A'), ('reqid', 'baz')),
-                              ((1, 'A'), ('reqid', 'baz')),
-                              ((1, 'A'), ('reqid', 'baz'))] )
+        self.assertEquals(r, [((1, 'A'), 'baz'),
+                              ((1, 'A'), 'baz'),
+                              ((1, 'A'), 'baz')] )
 
         self.assertEquals( self.A.instance, 3 )
         self.assertEquals( self.B.instance, 3 )

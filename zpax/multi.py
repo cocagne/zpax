@@ -182,7 +182,7 @@ class MultiPaxosNode(object):
 
 
     def behind_in_sequence(self, current_instance):
-        self.next_instance( set_instance_to = current_instance )
+        pass
         
             
     #------------------------------------------------------------------
@@ -209,7 +209,7 @@ class MultiPaxosNode(object):
 
             
     def receive_set_proposal(self, from_uid, kw):
-        self.pax.set_proposal( (kw['request_id'], kw['proposal_value']) )
+        self.pax.set_proposal( kw['proposal_value'] )
         self.advocate.set_proposal( kw['instance'], kw['request_id'], kw['proposal_value'] )
         self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
         
@@ -346,6 +346,8 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
 
     def receive_heartbeat(self, from_uid, kw):
         if kw['instance'] > self.instance:
+            self.next_instance( set_instance_to = kw['instance'] )
+            self.pax.recv_heartbeat( kw['leader_proposal_id'] )
             self.behind_in_sequence( kw['instance'] )
         elif kw['instance'] == self.instance:
             self.pax.recv_heartbeat( kw['leader_proposal_id'] )
