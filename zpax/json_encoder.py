@@ -16,7 +16,7 @@ class JSONEncoder (object):
         if parts:
             plist.extend( parts )
         
-        return [ json.dumps(p) for p in plist ]
+        return [ str(json.dumps(p)) for p in plist ]
 
 
     def decode(self, jparts):

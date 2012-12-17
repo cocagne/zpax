@@ -10,7 +10,7 @@ this_dir = pd(os.path.abspath(__file__))
 sys.path.append( pd(this_dir) )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
-from zpax import single_value, net
+from zpax import single_value, net, json_encoder
 
 
 from twisted.internet import reactor, defer
@@ -36,7 +36,7 @@ def doit():
                      'tcp://127.0.0.1:333{}'.format(i))
 
     i = ids[ sys.argv[1] ]    
-    n = net.NetworkNode( sys.argv[1] )
+    n = net.NetworkNode( sys.argv[1], json_encoder.JSONEncoder() )
     
     n.connect(znodes, False)
     

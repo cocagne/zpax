@@ -28,17 +28,14 @@ def doit():
     r = tzmq.ZmqReqSocket()
     s = tzmq.ZmqSubSocket()
 
-    self.pax_sub.subscribe = 'zpax'
-
-    r.messageReceived = recv_req
-    s.messageReceived = secv_sub
-
-
     def recv_req(msg_parts):
         print 'Reply: ', json.loads(msg_parts[0])
 
     def recv_sub(parts):
-        print 'PUB: ', json.loads(parts[0])
+        print 'PUB: ', json.loads(parts[1])
+
+
+    s.subscribe = 'current_value'
 
     r.messageReceived = recv_req
     s.messageReceived = recv_sub
@@ -47,9 +44,9 @@ def doit():
     s.connect('tcp://localhost:555{}'.format(ids[node]))
 
     if val:
-        r.send( json.dumps( dict(type='propose_value', sequence_number=int(seq), value=val) ) )
+        r.send( json.dumps( dict(type='propose_value', instance=int(seq), request_id='rid', proposed_value=val) ) )
     else:
-        r.send( json.dumps( dict(type='query_value') )
+        r.send( json.dumps( dict(type='query_value') ) )
 
         
 reactor.callWhenRunning(doit)

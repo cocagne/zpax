@@ -119,20 +119,20 @@ class SingleValueNode (multi.MultiPaxosHeartbeatNode):
             print 'Invalid Message Type', msg_parts[0]
             return
 
-        fobj(addr, msg)
+        fobj(msg)
             
         
     def _REP_propose_value(self, msg):
         try:
-            self.set_proposal(msg['instance'],
-                              msg['request_id'],
-                              msg['proposed_value'])
+            self.set_proposal(msg['request_id'],
+                              msg['proposed_value'],
+                              msg['instance'],)
             self.reply(proposed=True)
-        except node.ProposalFailed, e:
-            self.reply(proposed=False, error_message=str(e))
+        except multi.ProposalFailed, e:
+            self.reply(proposed=False, error_message=str(e), current_instance=e.current_instance)
 
             
-    def _REP_query_value(self, addr, msg):
+    def _REP_query_value(self, msg):
         self.reply(instance=self.cur_instance,
                    request_id=self.cur_proposal,
                    value=self.cur_value)

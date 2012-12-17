@@ -1,4 +1,5 @@
 import os
+import random
 
 from twisted.internet import defer, task, reactor
 
@@ -202,6 +203,7 @@ class MultiPaxosNode(object):
         
 
     def send_proposal_to_leader(self, instance, request_id, proposal_value):
+        print 'SENDING PROP TO LEADER', self.node_uid, self.leader_uid
         if instance == self.instance and self.leader_uid is not None:
             self.unicast( self.leader_uid, 'set_proposal',
                           request_id     = request_id,
@@ -209,7 +211,8 @@ class MultiPaxosNode(object):
 
             
     def receive_set_proposal(self, from_uid, kw):
-        self.pax.set_proposal( kw['proposal_value'] )
+        print 'GOT PROP', kw
+        self.pax.set_proposal( (kw['request_id'], kw['proposal_value']) )
         self.advocate.set_proposal( kw['instance'], kw['request_id'], kw['proposal_value'] )
         self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
         
@@ -225,11 +228,14 @@ class MultiPaxosNode(object):
     #------------------------------------------------------------------
 
     def send_prepare(self, proposer_obj, proposal_id):
-        self.broadcast( 'prepare', proposal_id = proposal_id )
+        # skip 25% of prepare messages. This should prevent lock-step
+        # leadership battles from continuing indefinitely
+        if random.random() > 0.25:
+            self.broadcast( 'prepare', proposal_id = proposal_id )
 
         
     def receive_prepare(self, from_uid, kw):
-        self.pax.recv_prepare( kw['proposal_id'] )
+        self.pax.recv_prepare( tuple(kw['proposal_id']) )
         
 
     def send_promise(self, proposer_obj, proposal_id, previous_id, accepted_value):
@@ -239,7 +245,8 @@ class MultiPaxosNode(object):
 
         
     def receive_promise(self, from_uid, kw):
-        self.pax.recv_promise( from_uid, kw['proposal_id'], kw['previous_id'],
+        self.pax.recv_promise( from_uid, tuple(kw['proposal_id']),
+                               tuple(kw['previous_id']) if kw['previous_id'] else None,
                                kw['accepted_value'] )
 
         
@@ -248,7 +255,7 @@ class MultiPaxosNode(object):
 
         
     def receive_prepare_nack(self, from_uid, kw):
-        self.pax.recv_prepare_nack( kw['proposal_id'] )
+        self.pax.recv_prepare_nack( tuple(kw['proposal_id']) )
 
         
     def send_accept(self, proposer_obj, proposal_id, proposal_value):
@@ -257,7 +264,7 @@ class MultiPaxosNode(object):
 
         
     def receive_accept(self, from_uid, kw):
-        self.pax.recv_accept_request( kw['proposal_id'], kw['proposal_value'] )
+        self.pax.recv_accept_request( tuple(kw['proposal_id']), kw['proposal_value'] )
 
         
     def send_accept_nack(self, proposer_obj, proposal_id, promised_id):
@@ -266,7 +273,7 @@ class MultiPaxosNode(object):
 
 
     def receive_accept_nack(self, from_uid, kw):
-        self.pax.recv_accept_nack( from_uid, kw['proposal_id'], kw['promised_id'] )
+        self.pax.recv_accept_nack( from_uid, tuple(kw['proposal_id']), tuple(kw['promised_id']) )
         
 
     def send_accepted(self, proposer_obj, proposal_id, accepted_value):
@@ -275,10 +282,11 @@ class MultiPaxosNode(object):
 
         
     def receive_accepted(self, from_uid, kw):
-        self.pax.recv_accepted( from_uid, kw['proposal_id'], kw['accepted_value'] )
+        self.pax.recv_accepted( from_uid, tuple(kw['proposal_id']), kw['accepted_value'] )
 
         
     def on_leadership_acquired(self, proposer_obj):
+        #print 'LEADERSHIP ACQ: ', self.node_uid
         pass
 
     
@@ -347,10 +355,10 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
     def receive_heartbeat(self, from_uid, kw):
         if kw['instance'] > self.instance:
             self.next_instance( set_instance_to = kw['instance'] )
-            self.pax.recv_heartbeat( kw['leader_proposal_id'] )
+            self.pax.recv_heartbeat( tuple(kw['leader_proposal_id']) )
             self.behind_in_sequence( kw['instance'] )
         elif kw['instance'] == self.instance:
-            self.pax.recv_heartbeat( kw['leader_proposal_id'] )
+            self.pax.recv_heartbeat( tuple(kw['leader_proposal_id']) )
         
 
     def schedule(self, node_obj,  msec_delay, func_obj):

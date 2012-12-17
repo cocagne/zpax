@@ -15,7 +15,7 @@ class SimpleEncoder(object):
 class NetworkNode (object):
 
 
-    def __init__(self, node_uid):
+    def __init__(self, node_uid, encoder=SimpleEncoder()):
 
         self.node_uid         = node_uid
 
@@ -24,7 +24,7 @@ class NetworkNode (object):
         self.pax_rtr          = None
         self.pax_pub          = None
         self.pax_sub          = None
-        self.encoder          = SimpleEncoder()
+        self.encoder          = encoder
         self.dispatch_message = lambda x, y: None
         
 
@@ -91,7 +91,7 @@ class NetworkNode (object):
     def unicast_message(self, node_uid, message_type, *parts):
         if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
             parts = parts[0]
-        l = [node_uid]
+        l = [str(node_uid)]
         l.extend( self.encoder.encode(self.node_uid, message_type, parts) )
         self.pax_rtr.send( l )
 
