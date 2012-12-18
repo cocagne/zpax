@@ -164,6 +164,7 @@ class MultiPaxosNode(object):
         is left to the subclass.
         '''
         self.net = net_node
+        self.net.dispatch_message = self.dispatch_message
         self.advocate.recover(self)
 
 
