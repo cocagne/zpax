@@ -38,6 +38,18 @@ def gatherResults( l ):
         return defer.gatherResults(l, consumeErrors=True)
     else:
         return defer.gatherResults(l)
+
+
+def trace( fn ):
+    @defer.inlineCallbacks
+    def wrapit(self, *args, **kwargs):
+        testhelper.TRACE = True
+        print ''
+        print 'Trace:'
+        yield fn(self, *args, **kwargs)
+        testhelper.TRACE = False
+        print ''
+    return wrapit
     
 
 class HBTestNode(multi.MultiPaxosHeartbeatNode):
@@ -50,16 +62,22 @@ class HBTestNode(multi.MultiPaxosHeartbeatNode):
 
 
     def on_leadership_acquired(self, *args):
+        if testhelper.TRACE:
+            print self.node_uid, 'Leadership Acquired'
         super(HBTestNode,self).on_leadership_acquired(*args)
 
         self.dleader_acq.callback(None)
 
 
     def on_leadership_lost(self, *args):
+        if testhelper.TRACE:
+            print self.node_uid, 'Leadership Lost'
         self.dleader_acq = defer.Deferred()
         super(HBTestNode,self).on_leadership_lost(*args)
 
     def on_resolution(self, proposer_obj, proposal_id, value):
+        if testhelper.TRACE:
+            print self.node_uid, 'Resolution:', proposal_id, value
         #print 'RESOLUTION: ', proposal_id, value
         d = self.dresolution
         self.dresolution = defer.Deferred()
@@ -93,13 +111,16 @@ class MultiTesterBase(object):
         pass
 
 
+    #    @trace
     @defer.inlineCallbacks
     def test_initial_leadership_acquisition(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
-
+        #@trace
     @defer.inlineCallbacks
     def test_leadership_recovery_on_failure(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
         d = defer.Deferred()
@@ -122,6 +143,7 @@ class MultiTesterBase(object):
         
     @defer.inlineCallbacks
     def test_leader_resolution(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
         d = gatherResults( [self.A.dresolution,
@@ -138,6 +160,7 @@ class MultiTesterBase(object):
 
     @defer.inlineCallbacks
     def test_accept_nack(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
         d = gatherResults( [self.A.dresolution,
@@ -162,6 +185,7 @@ class MultiTesterBase(object):
         
     @defer.inlineCallbacks
     def test_non_leader_resolution(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
         d = gatherResults( [self.A.dresolution,
@@ -180,6 +204,7 @@ class MultiTesterBase(object):
 
     @defer.inlineCallbacks
     def test_proposal_advocate_retry(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
         d = gatherResults( [self.A.dresolution,
@@ -207,6 +232,7 @@ class MultiTesterBase(object):
         
     @defer.inlineCallbacks
     def test_resolution_with_leadership_failure_and_isolated_node(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
         d = gatherResults( [self.B.dresolution,
@@ -227,14 +253,15 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertTrue(r in ( [((1, 'B'), ('reqid', 'foobar')),
-                                ((1, 'B'), ('reqid', 'foobar'))],
-                               [((1, 'C'), ('reqid', 'foobar')),
-                                ((1, 'C'), ('reqid', 'foobar'))]) )
+        self.assertTrue(r in ( [((2, 'B'), ('reqid', 'foobar')),
+                                ((2, 'B'), ('reqid', 'foobar'))],
+                               [((2, 'C'), ('reqid', 'foobar')),
+                                ((2, 'C'), ('reqid', 'foobar'))]) )
 
 
     @defer.inlineCallbacks
     def test_multiple_instances(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
         self.assertEquals( self.A.instance, 1 )
@@ -272,6 +299,7 @@ class MultiTesterBase(object):
 
     @defer.inlineCallbacks
     def test_behind_in_sequence(self):
+        self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
         self.assertEquals( self.A.instance, 1 )
@@ -285,6 +313,7 @@ class MultiTesterBase(object):
         self.A.set_proposal( 'reqid', 'foobar' )
 
         r = yield d
+        
 
         self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
                               ((1, 'A'), ('reqid', 'foobar'))] )
@@ -302,7 +331,7 @@ class MultiTesterBase(object):
                             
         
         self.A.set_proposal( 'reqid', 'baz' )
-
+        
         r = yield d
 
         self.assertEquals(r, [((1, 'A'), ('reqid', 'baz')),
@@ -335,5 +364,5 @@ class HeartbeatTester(MultiTesterBase, unittest.TestCase):
         for uid in all_nodes:
             self.nodes[uid].net.connect( zpax_nodes, False )
             
-        self.nodes['A'].pax._tlast = 0
-        self.nodes['A'].pax.acquire_leadership()
+        self.nodes['A'].pax._tlast_hb   = 0
+        self.nodes['A'].pax._tlast_prep = 0

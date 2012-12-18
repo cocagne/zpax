@@ -217,6 +217,8 @@ class MultiPaxosNode(object):
 
         if f:
             f(from_uid, kwargs)
+        else:
+            print 'MISSING MESSAGE HANDLER: ', repr(msg_type)
 
 
     def behind_in_sequence(self, current_instance):
@@ -234,6 +236,7 @@ class MultiPaxosNode(object):
             instance = self.instance
             
         if instance == self.instance:
+            self.pax.set_proposal( (request_id, proposal_value) )
             self.advocate.set_proposal( instance, request_id, proposal_value )
         else:
             raise InstanceMismatch(self.instance)
@@ -247,8 +250,7 @@ class MultiPaxosNode(object):
 
             
     def receive_set_proposal(self, from_uid, kw):
-        self.pax.set_proposal( (kw['request_id'], kw['proposal_value']) )
-        self.advocate.set_proposal( kw['instance'], kw['request_id'], kw['proposal_value'] )
+        self.set_proposal(kw['request_id'], kw['proposal_value'])
         self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
         
 
@@ -263,14 +265,11 @@ class MultiPaxosNode(object):
     #------------------------------------------------------------------
 
     def send_prepare(self, proposer_obj, proposal_id):
-        # skip 25% of prepare messages. This should prevent lock-step
-        # leadership battles from continuing indefinitely
-        if random.random() > 0.25:
-            self.broadcast( 'prepare', proposal_id = proposal_id )
+        self.broadcast( 'prepare', proposal_id = proposal_id )
 
         
     def receive_prepare(self, from_uid, kw):
-        self.pax.recv_prepare( tuple(kw['proposal_id']) )
+        self.pax.recv_prepare( from_uid, tuple(kw['proposal_id']) )
         
 
     def send_promise(self, proposer_obj, proposal_id, previous_id, accepted_value):

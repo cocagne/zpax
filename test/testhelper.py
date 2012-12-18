@@ -1,5 +1,6 @@
 from twisted.internet import defer, task, reactor
 
+TRACE = False
 
 nodes = dict() # uid => NetworkNode object
 
@@ -51,7 +52,12 @@ class NetworkNode (object):
 
     def recv_message(self, src_uid, message_type, parts):
         if self.link_up:
+            if TRACE:
+                print src_uid, '=>', self.node_uid, '[rcv]', message_type.ljust(15), parts
             self.dispatch_message( src_uid, message_type, parts )
+        else:
+            if TRACE:
+                print src_uid, '=>', self.node_uid, '[drp]', message_type.ljust(15), parts
 
 
     def broadcast_message(self, message_type, *parts):
