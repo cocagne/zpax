@@ -253,10 +253,10 @@ class MultiTesterBase(object):
 
         r = yield d
 
-        self.assertTrue(r in ( [((2, 'B'), ('reqid', 'foobar')),
-                                ((2, 'B'), ('reqid', 'foobar'))],
-                               [((2, 'C'), ('reqid', 'foobar')),
-                                ((2, 'C'), ('reqid', 'foobar'))]) )
+        self.assertTrue(r in ( [((1, 'B'), ('reqid', 'foobar')),
+                                ((1, 'B'), ('reqid', 'foobar'))],
+                               [((1, 'C'), ('reqid', 'foobar')),
+                                ((1, 'C'), ('reqid', 'foobar'))]) )
 
 
     @defer.inlineCallbacks

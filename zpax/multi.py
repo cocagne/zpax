@@ -120,7 +120,7 @@ class ProposalAdvocate (object):
                                            self._send_proposal)
 
             if self.mnode.pax.leader:
-                self.mnode.pax.retransmit_accept()
+                self.mnode.pax.resend_accept()
             else:
                 self.mnode.send_proposal_to_leader(self.instance, self.request_id, self.proposal)
         else:
@@ -272,10 +272,10 @@ class MultiPaxosNode(object):
         self.pax.recv_prepare( from_uid, tuple(kw['proposal_id']) )
         
 
-    def send_promise(self, proposer_obj, proposal_id, previous_id, accepted_value):
-        self.broadcast( 'promise', proposal_id    = proposal_id,
-                                   previous_id    = previous_id,
-                                   accepted_value = accepted_value )
+    def send_promise(self, proposer_obj, to_uid, proposal_id, previous_id, accepted_value):
+        self.unicast( to_uid, 'promise', proposal_id    = proposal_id,
+                                         previous_id    = previous_id,
+                                         accepted_value = accepted_value )
 
         
     def receive_promise(self, from_uid, kw):
@@ -284,12 +284,12 @@ class MultiPaxosNode(object):
                                kw['accepted_value'] )
 
         
-    def send_prepare_nack(self, propser_obj, proposal_id):
-        self.broadcast( 'prepare_nack', proposal_id = proposal_id )
+    def send_prepare_nack(self, propser_obj, to_uid, proposal_id):
+        self.unicast( to_uid, 'prepare_nack', proposal_id = proposal_id )
 
         
     def receive_prepare_nack(self, from_uid, kw):
-        self.pax.recv_prepare_nack( tuple(kw['proposal_id']) )
+        self.pax.recv_prepare_nack( from_uid, tuple(kw['proposal_id']) )
 
         
     def send_accept(self, proposer_obj, proposal_id, proposal_value):
@@ -298,19 +298,19 @@ class MultiPaxosNode(object):
 
         
     def receive_accept(self, from_uid, kw):
-        self.pax.recv_accept_request( tuple(kw['proposal_id']), kw['proposal_value'] )
+        self.pax.recv_accept_request( from_uid, tuple(kw['proposal_id']), kw['proposal_value'] )
 
         
-    def send_accept_nack(self, proposer_obj, proposal_id, promised_id):
-        self.broadcast( 'accept_nack', proposal_id = proposal_id,
-                                       promised_id = promised_id )
+    def send_accept_nack(self, proposer_obj, to_uid, proposal_id, promised_id):
+        self.unicast( to_uid, 'accept_nack', proposal_id = proposal_id,
+                                             promised_id = promised_id )
 
 
     def receive_accept_nack(self, from_uid, kw):
         self.pax.recv_accept_nack( from_uid, tuple(kw['proposal_id']), tuple(kw['promised_id']) )
         
 
-    def send_accepted(self, proposer_obj, proposal_id, accepted_value):
+    def send_accepted(self, proposer_obj, to_uid, proposal_id, accepted_value):
         self.broadcast( 'accepted', proposal_id    = proposal_id,
                                     accepted_value = accepted_value )
 
@@ -409,10 +409,10 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
     def receive_heartbeat(self, from_uid, kw):
         if kw['instance'] > self.instance:
             self.next_instance( set_instance_to = kw['instance'] )
-            self.pax.recv_heartbeat( tuple(kw['leader_proposal_id']) )
+            self.pax.recv_heartbeat( from_uid, tuple(kw['leader_proposal_id']) )
             self.behind_in_sequence( kw['instance'] )
         elif kw['instance'] == self.instance:
-            self.pax.recv_heartbeat( tuple(kw['leader_proposal_id']) )
+            self.pax.recv_heartbeat( from_uid, tuple(kw['leader_proposal_id']) )
         
 
     def schedule(self, node_obj,  msec_delay, func_obj):
