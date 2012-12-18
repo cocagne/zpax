@@ -33,15 +33,18 @@ class ProposalAdvocate (object):
     callLater   = reactor.callLater
     retry_delay = 10 # seconds
 
+    instance   = None
+    proposal   = None
+    request_id = None
+    retry_cb   = None
+
+    
     def __init__(self, mnode):
         '''
         retry_delay - Floating point delay in seconds between retry attempts
         '''
-        self.mnode      = mnode
-        self.instance   = None
-        self.proposal   = None
-        self.request_id = None
-        self.retry_cb   = None
+        self.mnode = mnode
+        
 
         
     def cancel(self):
@@ -58,6 +61,22 @@ class ProposalAdvocate (object):
         self.proposal   = None
         self.request_id = None
 
+        
+    def __getstate__(self):
+        d = dict(self.__dict__)
+        d.pop('retry_cb', None)
+        d.pop('mnode', None)
+        return d
+
+
+    def recover(self, mnode):
+        '''
+        Called when recovering from durable state
+        '''
+        self.mnode = mnode
+        if self.request_id is not None:
+            self._send_proposal()
+            
         
     def proposal_acknowledged(self, request_id):
         '''
@@ -100,7 +119,10 @@ class ProposalAdvocate (object):
             self.retry_cb = self.callLater(self.retry_delay,
                                            self._send_proposal)
 
-            self.mnode.send_proposal_to_leader(self.instance, self.request_id, self.proposal)
+            if self.mnode.pax.leader:
+                self.mnode.pax.retransmit_accept()
+            else:
+                self.mnode.send_proposal_to_leader(self.instance, self.request_id, self.proposal)
         else:
             self.cancel()
 
@@ -128,6 +150,21 @@ class MultiPaxosNode(object):
     def shutdown(self):
         self.advocate.cancel()
         self.net.shutdown()
+
+
+    def __getstate__(self):
+        d = dict(self.__dict__)
+        d.pop('net', None)
+        return d
+
+
+    def recover(self, net_node):
+        '''
+        Called when recovering from durable state. Recovery of the paxos node instance
+        is left to the subclass.
+        '''
+        self.net = net_node
+        self.advocate.recover(self)
 
 
     def _new_paxos_node(self):
@@ -203,7 +240,6 @@ class MultiPaxosNode(object):
         
 
     def send_proposal_to_leader(self, instance, request_id, proposal_value):
-        print 'SENDING PROP TO LEADER', self.node_uid, self.leader_uid
         if instance == self.instance and self.leader_uid is not None:
             self.unicast( self.leader_uid, 'set_proposal',
                           request_id     = request_id,
@@ -211,7 +247,6 @@ class MultiPaxosNode(object):
 
             
     def receive_set_proposal(self, from_uid, kw):
-        print 'GOT PROP', kw
         self.pax.set_proposal( (kw['request_id'], kw['proposal_value']) )
         self.advocate.set_proposal( kw['instance'], kw['request_id'], kw['proposal_value'] )
         self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
@@ -301,6 +336,9 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
     hb_period       = 60
     liveness_window = 180
 
+    hb_poll_task      = None
+    leader_pulse_task = None
+
     def __init__(self, *args, **kwargs):
 
         self.hb_period       = kwargs.pop('hb_period',       self.hb_period)
@@ -308,10 +346,7 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
             
         super(MultiPaxosHeartbeatNode, self).__init__(*args, **kwargs)
 
-        self.hb_poll_task      = task.LoopingCall( lambda : self.pax.poll_liveness()  )
-        self.leader_pulse_task = task.LoopingCall( lambda : self.pax.pulse()          )
-
-        self.hb_poll_task.start( self.liveness_window )
+        self._start_tasks()
 
         self.instance_exceptions.add('heartbeat')
 
@@ -324,6 +359,26 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
             self.leader_pulse_task.stop()
 
         super(MultiPaxosHeartbeatNode, self).shutdown()
+
+
+    def __getstate__(self):
+        d = super(MultiPaxosHeartbeatNode, self).__getstate__()
+        d.pop('hb_poll_task',      None)
+        d.pop('leader_pulse_task', None)
+        return d
+
+
+    def recover(self, *args):
+        super(MultiPaxosHeartbeatNode, self).recover(*args)
+        self._start_tasks()
+        self.pax.recover(self)
+
+
+    def _start_tasks(self):
+        self.hb_poll_task      = task.LoopingCall( lambda : self.pax.poll_liveness()  )
+        self.leader_pulse_task = task.LoopingCall( lambda : self.pax.pulse()          )
+
+        self.hb_poll_task.start( self.liveness_window )
 
         
     def _new_paxos_node(self):
