@@ -133,6 +133,7 @@ class MultiPaxosNode(object):
 
     def __init__(self, net_node, quorum_size):
         self.net         = net_node
+        self.node_uid    = net_node.node_uid
         self.quorum_size = quorum_size
         self.instance    = 0
         self.leader_uid  = None
@@ -163,6 +164,7 @@ class MultiPaxosNode(object):
         Called when recovering from durable state. Recovery of the paxos node instance
         is left to the subclass.
         '''
+        assert self.node_uid == net_node.node_uid, "Node UID mismatch"
         self.net = net_node
         self.net.dispatch_message = self.dispatch_message
         self.advocate.recover(self)
@@ -174,11 +176,6 @@ class MultiPaxosNode(object):
         '''
 
 
-    @property
-    def node_uid(self):
-        return self.net.node_uid
-
-    
     def next_instance(self, set_instance_to=None):
         self.advocate.cancel()
         
@@ -193,15 +190,11 @@ class MultiPaxosNode(object):
     def broadcast(self, msg_type, **kwargs):
         kwargs.update( dict(instance=self.instance) )
         self.net.broadcast_message(msg_type, kwargs)
-        self.dispatch_message(self.node_uid, msg_type, [kwargs,])
 
         
     def unicast(self, dest_uid, msg_type, **kwargs):
         kwargs.update( dict(instance=self.instance) )
-        if dest_uid == self.node_uid:
-            self.dispatch_message(self.node_uid, msg_type, [kwargs,])
-        else:
-            self.net.unicast_message(dest_uid, msg_type, kwargs)
+        self.net.unicast_message(dest_uid, msg_type, kwargs)
 
 
     def dispatch_message(self, from_uid, msg_type, parts):
@@ -369,9 +362,10 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
 
 
     def recover(self, *args):
+        self.pax.recover(self)
         super(MultiPaxosHeartbeatNode, self).recover(*args)
         self._start_tasks()
-        self.pax.recover(self)
+        
 
 
     def _start_tasks(self):
