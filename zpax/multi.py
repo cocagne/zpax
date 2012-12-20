@@ -120,7 +120,7 @@ class ProposalAdvocate (object):
                                            self._send_proposal)
 
             if self.mnode.pax.leader:
-                self.mnode.pax.retransmit_accept()
+                self.mnode.pax.resend_accept()
             else:
                 self.mnode.send_proposal_to_leader(self.instance, self.request_id, self.proposal)
         else:
@@ -133,6 +133,7 @@ class MultiPaxosNode(object):
 
     def __init__(self, net_node, quorum_size):
         self.net         = net_node
+        self.node_uid    = net_node.node_uid
         self.quorum_size = quorum_size
         self.instance    = 0
         self.leader_uid  = None
@@ -163,7 +164,9 @@ class MultiPaxosNode(object):
         Called when recovering from durable state. Recovery of the paxos node instance
         is left to the subclass.
         '''
+        assert self.node_uid == net_node.node_uid, "Node UID mismatch"
         self.net = net_node
+        self.net.dispatch_message = self.dispatch_message
         self.advocate.recover(self)
 
 
@@ -173,11 +176,6 @@ class MultiPaxosNode(object):
         '''
 
 
-    @property
-    def node_uid(self):
-        return self.net.node_uid
-
-    
     def next_instance(self, set_instance_to=None):
         self.advocate.cancel()
         
@@ -192,15 +190,11 @@ class MultiPaxosNode(object):
     def broadcast(self, msg_type, **kwargs):
         kwargs.update( dict(instance=self.instance) )
         self.net.broadcast_message(msg_type, kwargs)
-        self.dispatch_message(self.node_uid, msg_type, [kwargs,])
 
         
     def unicast(self, dest_uid, msg_type, **kwargs):
         kwargs.update( dict(instance=self.instance) )
-        if dest_uid == self.node_uid:
-            self.dispatch_message(self.node_uid, msg_type, [kwargs,])
-        else:
-            self.net.unicast_message(dest_uid, msg_type, kwargs)
+        self.net.unicast_message(dest_uid, msg_type, kwargs)
 
 
     def dispatch_message(self, from_uid, msg_type, parts):
@@ -217,6 +211,8 @@ class MultiPaxosNode(object):
 
         if f:
             f(from_uid, kwargs)
+        else:
+            print 'MISSING MESSAGE HANDLER: ', repr(msg_type)
 
 
     def behind_in_sequence(self, current_instance):
@@ -234,6 +230,7 @@ class MultiPaxosNode(object):
             instance = self.instance
             
         if instance == self.instance:
+            self.pax.set_proposal( (request_id, proposal_value) )
             self.advocate.set_proposal( instance, request_id, proposal_value )
         else:
             raise InstanceMismatch(self.instance)
@@ -247,8 +244,7 @@ class MultiPaxosNode(object):
 
             
     def receive_set_proposal(self, from_uid, kw):
-        self.pax.set_proposal( (kw['request_id'], kw['proposal_value']) )
-        self.advocate.set_proposal( kw['instance'], kw['request_id'], kw['proposal_value'] )
+        self.set_proposal(kw['request_id'], kw['proposal_value'])
         self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
         
 
@@ -263,20 +259,17 @@ class MultiPaxosNode(object):
     #------------------------------------------------------------------
 
     def send_prepare(self, proposer_obj, proposal_id):
-        # skip 25% of prepare messages. This should prevent lock-step
-        # leadership battles from continuing indefinitely
-        if random.random() > 0.25:
-            self.broadcast( 'prepare', proposal_id = proposal_id )
+        self.broadcast( 'prepare', proposal_id = proposal_id )
 
         
     def receive_prepare(self, from_uid, kw):
-        self.pax.recv_prepare( tuple(kw['proposal_id']) )
+        self.pax.recv_prepare( from_uid, tuple(kw['proposal_id']) )
         
 
-    def send_promise(self, proposer_obj, proposal_id, previous_id, accepted_value):
-        self.broadcast( 'promise', proposal_id    = proposal_id,
-                                   previous_id    = previous_id,
-                                   accepted_value = accepted_value )
+    def send_promise(self, proposer_obj, to_uid, proposal_id, previous_id, accepted_value):
+        self.unicast( to_uid, 'promise', proposal_id    = proposal_id,
+                                         previous_id    = previous_id,
+                                         accepted_value = accepted_value )
 
         
     def receive_promise(self, from_uid, kw):
@@ -285,12 +278,12 @@ class MultiPaxosNode(object):
                                kw['accepted_value'] )
 
         
-    def send_prepare_nack(self, propser_obj, proposal_id):
-        self.broadcast( 'prepare_nack', proposal_id = proposal_id )
+    def send_prepare_nack(self, propser_obj, to_uid, proposal_id):
+        self.unicast( to_uid, 'prepare_nack', proposal_id = proposal_id )
 
         
     def receive_prepare_nack(self, from_uid, kw):
-        self.pax.recv_prepare_nack( tuple(kw['proposal_id']) )
+        self.pax.recv_prepare_nack( from_uid, tuple(kw['proposal_id']) )
 
         
     def send_accept(self, proposer_obj, proposal_id, proposal_value):
@@ -299,19 +292,19 @@ class MultiPaxosNode(object):
 
         
     def receive_accept(self, from_uid, kw):
-        self.pax.recv_accept_request( tuple(kw['proposal_id']), kw['proposal_value'] )
+        self.pax.recv_accept_request( from_uid, tuple(kw['proposal_id']), kw['proposal_value'] )
 
         
-    def send_accept_nack(self, proposer_obj, proposal_id, promised_id):
-        self.broadcast( 'accept_nack', proposal_id = proposal_id,
-                                       promised_id = promised_id )
+    def send_accept_nack(self, proposer_obj, to_uid, proposal_id, promised_id):
+        self.unicast( to_uid, 'accept_nack', proposal_id = proposal_id,
+                                             promised_id = promised_id )
 
 
     def receive_accept_nack(self, from_uid, kw):
         self.pax.recv_accept_nack( from_uid, tuple(kw['proposal_id']), tuple(kw['promised_id']) )
         
 
-    def send_accepted(self, proposer_obj, proposal_id, accepted_value):
+    def send_accepted(self, proposer_obj, to_uid, proposal_id, accepted_value):
         self.broadcast( 'accepted', proposal_id    = proposal_id,
                                     accepted_value = accepted_value )
 
@@ -369,9 +362,10 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
 
 
     def recover(self, *args):
+        self.pax.recover(self)
         super(MultiPaxosHeartbeatNode, self).recover(*args)
         self._start_tasks()
-        self.pax.recover(self)
+        
 
 
     def _start_tasks(self):
@@ -410,10 +404,10 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
     def receive_heartbeat(self, from_uid, kw):
         if kw['instance'] > self.instance:
             self.next_instance( set_instance_to = kw['instance'] )
-            self.pax.recv_heartbeat( tuple(kw['leader_proposal_id']) )
+            self.pax.recv_heartbeat( from_uid, tuple(kw['leader_proposal_id']) )
             self.behind_in_sequence( kw['instance'] )
         elif kw['instance'] == self.instance:
-            self.pax.recv_heartbeat( tuple(kw['leader_proposal_id']) )
+            self.pax.recv_heartbeat( from_uid, tuple(kw['leader_proposal_id']) )
         
 
     def schedule(self, node_obj,  msec_delay, func_obj):

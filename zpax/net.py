@@ -28,7 +28,7 @@ class NetworkNode (object):
         self.dispatch_message = lambda x, y: None
         
 
-    def connect(self, zpax_nodes, recv_self_broadcast=True):
+    def connect(self, zpax_nodes):
         '''
         zpax_nodes - Dictionary of node_uid => (zmq_rtr_addr, zmq_pub_addr)
         '''
@@ -61,8 +61,7 @@ class NetworkNode (object):
         self.pax_sub.subscribe = 'zpax'
         
         for node_uid, tpl in zpax_nodes.iteritems():
-            if node_uid != self.node_uid or recv_self_broadcast:
-                self.pax_sub.connect(tpl[1])
+            self.pax_sub.connect(tpl[1])
                 
             if self.node_uid < node_uid:
                 # We only need 1 connection between any two router nodes so
@@ -88,10 +87,13 @@ class NetworkNode (object):
         self.pax_pub.send( l )
 
 
-    def unicast_message(self, node_uid, message_type, *parts):
+    def unicast_message(self, to_uid, message_type, *parts):
+        if to_uid == self.node_uid:
+            self.dispatch_message( self.node_uid, message_type, parts )
+            return
         if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
             parts = parts[0]
-        l = [str(node_uid)]
+        l = [str(to_uid)]
         l.extend( self.encoder.encode(self.node_uid, message_type, parts) )
         self.pax_rtr.send( l )
 

@@ -1,5 +1,6 @@
 from twisted.internet import defer, task, reactor
 
+TRACE = False
 
 nodes = dict() # uid => NetworkNode object
 
@@ -12,7 +13,7 @@ def broadcast_message( src_uid, message_type, *parts ):
     if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
         parts = parts[0]
     for n in nodes.values():
-        if n.link_up and (src_uid != n.node_uid or n.recv_self):
+        if n.link_up:
             n.recv_message( src_uid, message_type, parts )
             
 
@@ -32,13 +33,11 @@ class NetworkNode (object):
         self.node_uid         = node_uid
         self.zpax_nodes       = None # Dictionary of node_uid -> (rtr_addr, pub_addr)
         self.dispatch_message = lambda x, y: None
-        self.recv_self        = None
         self.link_up          = False
         
 
-    def connect(self, zpax_nodes, recv_self_broadcast=True):
+    def connect(self, zpax_nodes):
         self.zpax_nodes        = zpax_nodes
-        self.recv_self         = recv_self_broadcast
         self.link_up           = True
         nodes[ self.node_uid ] = self
         
@@ -51,7 +50,12 @@ class NetworkNode (object):
 
     def recv_message(self, src_uid, message_type, parts):
         if self.link_up:
+            if TRACE:
+                print src_uid, '=>', self.node_uid, '[rcv]', message_type.ljust(15), parts
             self.dispatch_message( src_uid, message_type, parts )
+        else:
+            if TRACE:
+                print src_uid, '=>', self.node_uid, '[drp]', message_type.ljust(15), parts
 
 
     def broadcast_message(self, message_type, *parts):
@@ -65,7 +69,7 @@ class NetworkNode (object):
         broadcast_message(self.node_uid, message_type, parts)
 
 
-    def unicast_message(self, node_uid, message_type, *parts):
+    def unicast_message(self, to_uid, message_type, *parts):
         if not self.link_up:
             return
         
@@ -73,5 +77,5 @@ class NetworkNode (object):
             parts = parts[0]
         if isinstance(parts, tuple):
             parts = list(parts)
-        unicast_message(self.node_uid, node_uid, message_type, parts)
+        unicast_message(self.node_uid, to_uid, message_type, parts)
 
