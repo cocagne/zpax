@@ -1,3 +1,6 @@
+# Switch net node to use a dictionary of "message_type" => dispatch function obj
+
+
 '''
 This module implements a simple, distributed Key-Value database that uses Paxos
 for ensuring consistency between nodes. The goal of this module is to provide a
@@ -97,65 +100,46 @@ class SqliteDB (object):
 
 
 
-class KeyValNode (node.BasicNode):
+class KeyValNode (multi.MultiPaxosHeartbeatNode):
     '''
-    This class implements the Paxos logic
-    for KeyValueDB. It extends multi.MultiPaxosHeartbeatNode in two significant
-    ways. First, it embeds within each heartbeat message the current
-    multi-paxos sequence number. This allows late-joining/recovering nodes to
-    quickly discover that their databases are out of sync and begin the catchup
-    process. Second, this node drops all Paxos messages while the database is
-    catching up. This prevents newly chosen values from entering the database
-    prior to the completion of the catchup process.
+    This class implements the Paxos logic for KeyValueDB. It extends the
+    base class functionality in two primary ways. First, it monitors the
+    heartbeat messages for currency and uses them as a trigger for
+    initiating and completing the database synchronization
+    process. Second, it disables participation in the Paxos algorithm while
+    during the synchronization process. This prevents newly chosen values
+    from entering the database in an out-of-order manner.
     '''
 
-    chatty = False
-
-    def __init__(self,
-                 kvdb,
-                 node_uid,
-                 durable_dir,
-                 object_id):
-
-        super(KeyValNode,self).__init__(node_uid, durable_dir, object_id)
-        
+    def __init__(self, kvdb, net_node, quorum_size):
+        super(KeyValNode,self).__init__(net_node, quorum_size)
         self.kvdb = kvdb
 
 
-    def getHeartbeatData(self):
-        return dict( seq_num = self.getCurrentSequenceNumber() )
-    
-    
-    def onHeartbeat(self, data):
-        if data['seq_num'] - 1 > self.kvdb.getMaxDBSequenceNumber():
-            if data['seq_num'] > self.getCurrentSequenceNumber():
-                self.setCurrentSequenceNumber( data['seq_num'] )
+    def receive_heartbeat(self, from_uid, kw):
 
+        super(KeyValNode,self).receive_heartbeat(from_uid, kw)
+
+        self.enabled = kw['instance'] == self.kvdb.last_instance + 1
+
+        if not self.enabled:
             self.kvdb.catchup()
-
-
-    # Override the sequence checking function in the baseclass to cause all
-    # packets to be dropped from our Paxos implementation while our database
-    # is out of sync
-    def checkSequence(self, header):
-        return super(KeyValNode,self).checkSequence(header) and not self.kvdb.isCatchingUp()
-
-
-    def onBehindInSequence(self, old_sequence_number, new_sequence_number):
-        self.kvdb.catchup()
-
         
-    def onProposalResolution(self, instance_num, value):
+
+    def on_resolution(self, proposer_obj, proposal_id, value):
         # This method is only called when our database is current
+        assert self.instance == self.kvdb.last_instance + 1
         
-        key, value = json.loads(value)
+        key, value = json.loads(value[0])
 
         self.kvdb.onValueSet( key, value, instance_num )
+
+        super(KeyValNode,self).on_resolution(proposer_obj, proposal_id, value)
         
 
 
 
-class KeyValueDB (node.JSONResponder):
+class KeyValueDB (object):
     '''
     This class implements a distributed key=value database that uses Paxos to
     coordinate database updates. Unlike the replacated state machine design
