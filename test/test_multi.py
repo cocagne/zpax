@@ -192,8 +192,10 @@ class MultiTesterBase(object):
         self.assertTrue( self.A.pax.leader )
 
         self.A.receive_accept_nack( 'B', dict(proposal_id=self.A.pax.proposal_id,
+                                              instance=1,
                                               promised_id=(2, 'B')))
         self.A.receive_accept_nack( 'C', dict(proposal_id=self.A.pax.proposal_id,
+                                              instance=1,
                                               promised_id=(2, 'B')))
 
         self.assertEquals( self.A.pax.next_proposal_number, 3 )

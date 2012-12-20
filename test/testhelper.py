@@ -32,7 +32,7 @@ class NetworkNode (object):
 
         self.node_uid         = node_uid
         self.zpax_nodes       = None # Dictionary of node_uid -> (rtr_addr, pub_addr)
-        self.dispatch_message = lambda x, y: None
+        self.message_handlers = list()
         self.link_up          = False
         
 
@@ -48,11 +48,19 @@ class NetworkNode (object):
             del nodes[ self.node_uid ]
 
 
+    def _dispatch_message(self, from_uid, message_type, parts):
+        for h in self.message_handlers:
+            f = getattr(h, 'receive_' + message_type, None)
+            if f:
+                f(from_uid, *parts)
+                break
+
+
     def recv_message(self, src_uid, message_type, parts):
         if self.link_up:
             if TRACE:
                 print src_uid, '=>', self.node_uid, '[rcv]', message_type.ljust(15), parts
-            self.dispatch_message( src_uid, message_type, parts )
+            self._dispatch_message( src_uid, message_type, parts )
         else:
             if TRACE:
                 print src_uid, '=>', self.node_uid, '[drp]', message_type.ljust(15), parts

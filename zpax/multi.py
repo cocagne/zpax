@@ -127,7 +127,6 @@ class ProposalAdvocate (object):
             self.cancel()
 
 
-
         
 class MultiPaxosNode(object):
 
@@ -138,12 +137,13 @@ class MultiPaxosNode(object):
         self.instance    = 0
         self.leader_uid  = None
         self.pax         = None
+        self.pax_ignore  = False # True if all Paxos messages should be ignored
         self.advocate    = ProposalAdvocate(self)
 
         self.instance_exceptions  = set() # message types that should be processed
                                           # even if the instance number is not current
                                           
-        self.net.dispatch_message = self.dispatch_message
+        self.net.message_handlers.append(self)
 
         self.next_instance()
         
@@ -166,7 +166,7 @@ class MultiPaxosNode(object):
         '''
         assert self.node_uid == net_node.node_uid, "Node UID mismatch"
         self.net = net_node
-        self.net.dispatch_message = self.dispatch_message
+        self.net.message_handlers.append(self)
         self.advocate.recover(self)
 
 
@@ -195,30 +195,18 @@ class MultiPaxosNode(object):
     def unicast(self, dest_uid, msg_type, **kwargs):
         kwargs.update( dict(instance=self.instance) )
         self.net.unicast_message(dest_uid, msg_type, kwargs)
-
-
-    def dispatch_message(self, from_uid, msg_type, parts):
-        if len(parts) != 1:
-            print 'Invalid message: parts length'
-            return
         
-        kwargs = parts[0]
-
-        if kwargs['instance'] != self.instance and not msg_type in self.instance_exceptions:
-            return # Old message
-
-        f = getattr(self, 'receive_' + msg_type, None)
-
-        if f:
-            f(from_uid, kwargs)
-        else:
-            print 'MISSING MESSAGE HANDLER: ', repr(msg_type)
-
-
+    
     def behind_in_sequence(self, current_instance):
         pass
         
-            
+
+    def _mpax_filter(func):
+        def wrapper(self, from_uid, msg):
+            if msg['instance'] == self.instance and not self.pax_ignore:
+                func(self, from_uid, msg)
+        return wrapper
+
     #------------------------------------------------------------------
     #
     # Proposal Management
@@ -242,15 +230,17 @@ class MultiPaxosNode(object):
                           request_id     = request_id,
                           proposal_value = proposal_value )
 
-            
-    def receive_set_proposal(self, from_uid, kw):
-        self.set_proposal(kw['request_id'], kw['proposal_value'])
-        self.unicast( from_uid, 'set_proposal_ack', request_id = kw['request_id'] )
-        
 
-    def receive_set_proposal_ack(self, from_uid, kw):
+    @_mpax_filter
+    def receive_set_proposal(self, from_uid, msg):
+        self.set_proposal(msg['request_id'], msg['proposal_value'])
+        self.unicast( from_uid, 'set_proposal_ack', request_id = msg['request_id'] )
+
+        
+    @_mpax_filter
+    def receive_set_proposal_ack(self, from_uid, msg):
         if from_uid == self.leader_uid:
-            self.advocate.proposal_acknowledged( kw['request_id'] )
+            self.advocate.proposal_acknowledged( msg['request_id'] )
 
     #------------------------------------------------------------------
     #
@@ -262,8 +252,9 @@ class MultiPaxosNode(object):
         self.broadcast( 'prepare', proposal_id = proposal_id )
 
         
-    def receive_prepare(self, from_uid, kw):
-        self.pax.recv_prepare( from_uid, tuple(kw['proposal_id']) )
+    @_mpax_filter
+    def receive_prepare(self, from_uid, msg):
+        self.pax.recv_prepare( from_uid, tuple(msg['proposal_id']) )
         
 
     def send_promise(self, proposer_obj, to_uid, proposal_id, previous_id, accepted_value):
@@ -272,27 +263,30 @@ class MultiPaxosNode(object):
                                          accepted_value = accepted_value )
 
         
-    def receive_promise(self, from_uid, kw):
-        self.pax.recv_promise( from_uid, tuple(kw['proposal_id']),
-                               tuple(kw['previous_id']) if kw['previous_id'] else None,
-                               kw['accepted_value'] )
+    @_mpax_filter
+    def receive_promise(self, from_uid, msg):
+        self.pax.recv_promise( from_uid, tuple(msg['proposal_id']),
+                               tuple(msg['previous_id']) if msg['previous_id'] else None,
+                               msg['accepted_value'] )
 
         
     def send_prepare_nack(self, propser_obj, to_uid, proposal_id):
         self.unicast( to_uid, 'prepare_nack', proposal_id = proposal_id )
 
         
-    def receive_prepare_nack(self, from_uid, kw):
-        self.pax.recv_prepare_nack( from_uid, tuple(kw['proposal_id']) )
+    @_mpax_filter
+    def receive_prepare_nack(self, from_uid, msg):
+        self.pax.recv_prepare_nack( from_uid, tuple(msg['proposal_id']) )
 
         
     def send_accept(self, proposer_obj, proposal_id, proposal_value):
         self.broadcast( 'accept', proposal_id    = proposal_id,
                                   proposal_value = proposal_value )
 
-        
-    def receive_accept(self, from_uid, kw):
-        self.pax.recv_accept_request( from_uid, tuple(kw['proposal_id']), kw['proposal_value'] )
+
+    @_mpax_filter
+    def receive_accept(self, from_uid, msg):
+        self.pax.recv_accept_request( from_uid, tuple(msg['proposal_id']), msg['proposal_value'] )
 
         
     def send_accept_nack(self, proposer_obj, to_uid, proposal_id, promised_id):
@@ -300,17 +294,19 @@ class MultiPaxosNode(object):
                                              promised_id = promised_id )
 
 
-    def receive_accept_nack(self, from_uid, kw):
-        self.pax.recv_accept_nack( from_uid, tuple(kw['proposal_id']), tuple(kw['promised_id']) )
+    @_mpax_filter
+    def receive_accept_nack(self, from_uid, msg):
+        self.pax.recv_accept_nack( from_uid, tuple(msg['proposal_id']), tuple(msg['promised_id']) )
         
 
     def send_accepted(self, proposer_obj, to_uid, proposal_id, accepted_value):
         self.broadcast( 'accepted', proposal_id    = proposal_id,
                                     accepted_value = accepted_value )
 
-        
-    def receive_accepted(self, from_uid, kw):
-        self.pax.recv_accepted( from_uid, tuple(kw['proposal_id']), kw['accepted_value'] )
+
+    @_mpax_filter
+    def receive_accepted(self, from_uid, msg):
+        self.pax.recv_accepted( from_uid, tuple(msg['proposal_id']), msg['accepted_value'] )
 
         
     def on_leadership_acquired(self, proposer_obj):
@@ -401,13 +397,13 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         self.broadcast( 'heartbeat', leader_proposal_id = leader_proposal_id )
 
 
-    def receive_heartbeat(self, from_uid, kw):
-        if kw['instance'] > self.instance:
-            self.next_instance( set_instance_to = kw['instance'] )
-            self.pax.recv_heartbeat( from_uid, tuple(kw['leader_proposal_id']) )
-            self.behind_in_sequence( kw['instance'] )
-        elif kw['instance'] == self.instance:
-            self.pax.recv_heartbeat( from_uid, tuple(kw['leader_proposal_id']) )
+    def receive_heartbeat(self, from_uid, msg):
+        if msg['instance'] > self.instance:
+            self.next_instance( set_instance_to = msg['instance'] )
+            self.pax.recv_heartbeat( from_uid, tuple(msg['leader_proposal_id']) )
+            self.behind_in_sequence( msg['instance'] )
+        elif msg['instance'] == self.instance:
+            self.pax.recv_heartbeat( from_uid, tuple(msg['leader_proposal_id']) )
         
 
     def schedule(self, node_obj,  msec_delay, func_obj):

@@ -13,7 +13,13 @@ class SimpleEncoder(object):
     
 
 class NetworkNode (object):
-
+    '''
+    Messages are handled by adding instances to the message_handlers list. The
+    first instance that contains a method named 'nn_receive_<message_type>'
+    will have that message called. The first argument is always the message
+    sender's node_uid. The remaining positional arguments are filled with the
+    parts of the ZeroMQ message.
+    '''
 
     def __init__(self, node_uid, encoder=SimpleEncoder()):
 
@@ -25,7 +31,7 @@ class NetworkNode (object):
         self.pax_pub          = None
         self.pax_sub          = None
         self.encoder          = encoder
-        self.dispatch_message = lambda x, y: None
+        self.message_handlers = list()
         
 
     def connect(self, zpax_nodes):
@@ -98,15 +104,22 @@ class NetworkNode (object):
         self.pax_rtr.send( l )
 
 
+    def _dispatch_message(self, from_uid, message_type, parts):
+        for h in self.message_handlers:
+            f = getattr(h, 'receive_' + message_type, None)
+            if f:
+                f(from_uid, *parts)
+                break
+            
     def _on_rtr_received(self, raw_parts):
         # discard source address. We'll use the one embedded in the message
         # for consistency
         from_uid, message_type, parts = self.encoder.decode( raw_parts[1:] )
-        self.dispatch_message( from_uid, message_type, parts )
+        self._dispatch_message( from_uid, message_type, parts )
 
-
+        
     def _on_sub_received(self, raw_parts):
         # discard the message header. Can address targeted subscriptions
         # later
         from_uid, message_type, parts = self.encoder.decode( raw_parts[1:] )
-        self.dispatch_message( from_uid, message_type, parts )
+        self._dispatch_message( from_uid, message_type, parts )

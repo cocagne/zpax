@@ -75,7 +75,7 @@ class NetworkNodeTesterBase(object):
                                       'ipc:///tmp/ts_{}_pub'.format(node_uid))
             
         for n in self.nodes.itervalues():
-            n.connect( zpax_nodes, recv_self )
+            n.connect( zpax_nodes )
 
             
     @defer.inlineCallbacks
@@ -85,15 +85,17 @@ class NetworkNodeTesterBase(object):
         yield self.delay(1) # wait for connections to establish
 
         msgs = dict()
-        
-        def gend( nid ):
-            def md( from_uid, msg_type, parts ):
-                msgs[ nid ].append( (from_uid, msg_type, parts) )
-            return md
+
+        class H(object):
+            def __init__(self, nid):
+                self.nid = nid
+
+            def receive_foomsg(self, from_uid, arg):
+                msgs[ self.nid ].append( (from_uid, arg) )
 
         for n in all_nodes:
             msgs[ n ] = list()
-            self.nodes[n].dispatch_message = gend(n)
+            self.nodes[n].message_handlers.append( H(n) )
             
         def s(src, dst, msg):
             self.nodes[src].unicast_message(dst, 'foomsg', msg)
@@ -110,65 +112,69 @@ class NetworkNodeTesterBase(object):
         for l in msgs.itervalues():
             l.sort()
 
-        expected = {'A': [('B', 'foomsg', ['BA']), ('C', 'foomsg', ['AC'])],
-                    'B': [('A', 'foomsg', ['AB']), ('C', 'foomsg', ['CB'])],
-                    'C': [('A', 'foomsg', ['AC']), ('B', 'foomsg', ['BC'])]}
+        expected = {'A': [('B', 'BA'), ('C', 'AC')],
+                    'B': [('A', 'AB'), ('C', 'CB')],
+                    'C': [('A', 'AC'), ('B', 'BC')]}
 
         self.assertEquals( msgs, expected )
 
-        
+
     @defer.inlineCallbacks
-    def test_broadcast_connections_no_recv_self(self):
-        self.connect(False)
-        
-        yield self.delay(1) # wait for connections to establish
-
-        msgs = dict()
-        
-        def gend( nid ):
-            def md( from_uid, msg_type, parts ):
-                msgs[ nid ].append( (from_uid, msg_type, parts) )
-            return md
-
-        for n in all_nodes:
-            msgs[ n ] = list()
-            self.nodes[n].dispatch_message = gend(n)
-            
-        def s(src, msg):
-            self.nodes[src].broadcast_message('foomsg', msg)
-
-        s('A', 'msgA')
-        s('B', 'msgB')
-        s('C', 'msgC')
-
-        yield self.delay(0.05) # process messages
-
-        for l in msgs.itervalues():
-            l.sort()
-
-        expected = {'A': [('B', 'foomsg', ['msgB']), ('C', 'foomsg', ['msgC'])],
-                    'B': [('A', 'foomsg', ['msgA']), ('C', 'foomsg', ['msgC'])],
-                    'C': [('A', 'foomsg', ['msgA']), ('B', 'foomsg', ['msgB'])]}
-
-        self.assertEquals( msgs, expected )
-
-        
-    @defer.inlineCallbacks
-    def test_broadcast_connections_recv_self(self):
+    def test_multiple_arguments(self):
         self.connect()
         
         yield self.delay(1) # wait for connections to establish
 
         msgs = dict()
-        
-        def gend( nid ):
-            def md( from_uid, msg_type, parts ):
-                msgs[ nid ].append( (from_uid, msg_type, parts) )
-            return md
+
+        class H(object):
+            def __init__(self, nid):
+                self.nid = nid
+
+            def receive_foomsg(self, from_uid, arg0, arg1, arg2):
+                msgs[ self.nid ].append( (from_uid, arg0, arg1, arg2) )
 
         for n in all_nodes:
             msgs[ n ] = list()
-            self.nodes[n].dispatch_message = gend(n)
+            self.nodes[n].message_handlers.append( H(n) )
+            
+        def s(src, dst, msg0, msg1, msg2):
+            self.nodes[src].unicast_message(dst, 'foomsg', msg0, msg1, msg2)
+
+        s('A', 'B', 'AB', 'foo', 'bar')
+
+        yield self.delay(0.05) # process messages
+
+        for l in msgs.itervalues():
+            l.sort()
+
+        expected = {'A': [],
+                    'B': [('A', 'AB', 'foo', 'bar')],
+                    'C': [] }
+
+        self.assertEquals( msgs, expected )
+
+        
+
+        
+    @defer.inlineCallbacks
+    def test_broadcast_connections_recv(self):
+        self.connect()
+        
+        yield self.delay(1) # wait for connections to establish
+
+        msgs = dict()
+
+        class H(object):
+            def __init__(self, nid):
+                self.nid = nid
+
+            def receive_foomsg(self, from_uid, arg):
+                msgs[ self.nid ].append( (from_uid, arg) )
+
+        for n in all_nodes:
+            msgs[ n ] = list()
+            self.nodes[n].message_handlers.append( H(n) )
             
         def s(src, msg):
             self.nodes[src].broadcast_message('foomsg', msg)
@@ -182,9 +188,57 @@ class NetworkNodeTesterBase(object):
         for l in msgs.itervalues():
             l.sort()
 
-        expected = {'A': [('A', 'foomsg', ['msgA']), ('B', 'foomsg', ['msgB']), ('C', 'foomsg', ['msgC'])],
-                    'B': [('A', 'foomsg', ['msgA']), ('B', 'foomsg', ['msgB']), ('C', 'foomsg', ['msgC'])],
-                    'C': [('A', 'foomsg', ['msgA']), ('B', 'foomsg', ['msgB']), ('C', 'foomsg', ['msgC'])]}
+        expected = {'A': [('A', 'msgA'), ('B', 'msgB'), ('C', 'msgC')],
+                    'B': [('A', 'msgA'), ('B', 'msgB'), ('C', 'msgC')],
+                    'C': [('A', 'msgA'), ('B', 'msgB'), ('C', 'msgC')]}
+
+
+        self.assertEquals( msgs, expected )
+
+
+    @defer.inlineCallbacks
+    def test_multiple_handlers(self):
+        self.connect()
+        
+        yield self.delay(1) # wait for connections to establish
+
+        msgs = dict()
+
+        class H(object):
+            def __init__(self, nid):
+                self.nid = nid
+
+            def receive_foomsg(self, from_uid, arg):
+                msgs[ self.nid ].append( (from_uid, arg) )
+
+        for n in all_nodes:
+            msgs[ n ] = list()
+            self.nodes[n].message_handlers.append( H(n) )
+
+
+        class H2(object):
+            def receive_special(self, from_uid, arg):
+                msgs['C'].append( (from_uid, 'special', arg) )
+
+        self.nodes['C'].message_handlers.append( H2() )
+            
+        def s(src, msg):
+            self.nodes[src].broadcast_message('foomsg', msg)
+
+        s('A', 'msgA')
+        s('B', 'msgB')
+        s('C', 'msgC')
+
+        self.nodes['A'].broadcast_message('special', 'blah')
+
+        yield self.delay(0.05) # process messages
+
+        for l in msgs.itervalues():
+            l.sort()
+
+        expected = {'A': [('A', 'msgA'), ('B', 'msgB'), ('C', 'msgC')],
+                    'B': [('A', 'msgA'), ('B', 'msgB'), ('C', 'msgC')],
+                    'C': [('A', 'msgA'), ('A', 'special', 'blah'), ('B', 'msgB'), ('C', 'msgC')]}
 
 
         self.assertEquals( msgs, expected )
