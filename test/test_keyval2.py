@@ -16,7 +16,7 @@ this_dir = pd(os.path.abspath(__file__))
 sys.path.append( pd(this_dir) )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
-from zpax import keyval, node, tzmq
+from zpax import keyval2, multi, tzmq
 
 
 def delay(t):

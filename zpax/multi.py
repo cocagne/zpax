@@ -148,6 +148,11 @@ class MultiPaxosNode(object):
         d.pop('net', None)
         return d
 
+    
+    def change_quorum_size(self, quorum_size):
+        self.quorum_size = quorum_size
+        self.pax.change_quorum_size( quorum_size )
+
 
     def recover(self, net_node):
         '''
