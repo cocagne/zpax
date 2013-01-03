@@ -20,14 +20,16 @@ from twisted.internet import defer, task, reactor
 
 
 _ZPAX_CONFIG_KEY = '__zpax_config__'
-
+_ZPAX_DELETE_KEY = '__zpax_delete__'
 
 tables = dict()
 
+# Deletions update the deltion key with the
+# instance number
 tables['kv'] = '''
 key      text PRIMARY KEY,
 value    text,
-resolution integer
+instance integer
 '''
 
 
@@ -54,7 +56,7 @@ class SqliteDB (object):
         for k,v in tables.iteritems():
             cur.execute('create table {} ({})'.format(k,v))
 
-        cur.execute('create index resolution_index on kv (resolution)')
+        cur.execute('create index instance_index on kv (instance)')
 
         self._con.commit()
         cur.close()
@@ -66,36 +68,36 @@ class SqliteDB (object):
             return r[0]
 
         
-    def get_resolution(self, key):
-        r = self._cur.execute('SELECT resolution FROM kv WHERE key=?', (key,)).fetchone()
+    def get_instance(self, key):
+        r = self._cur.execute('SELECT instance FROM kv WHERE key=?', (key,)).fetchone()
         if r:
             return r[0]
 
         
-    def update_key(self, key, value, resolution_number):
-        prevpn = self.get_resolution(key)
+    def update_key(self, key, value, instance_number):
+        prevpn = self.get_instance(key)
 
         if prevpn is None:
             self._cur.execute('INSERT INTO kv VALUES (?, ?, ?)',
-                              (key, value, resolution_number))
+                              (key, value, instance_number))
             self._con.commit()
             
-        elif resolution_number > prevpn:
-            self._cur.execute('UPDATE kv SET value=?, resolution=? WHERE key=?',
-                              (value, resolution_number, key))
+        elif instance_number > prevpn:
+            self._cur.execute('UPDATE kv SET value=?, instance=? WHERE key=?',
+                              (value, instance_number, key))
             self._con.commit()
 
             
-    def get_last_resolution(self):
-        r = self._cur.execute('SELECT MAX(resolution) FROM kv').fetchone()[0]
+    def get_last_instance(self):
+        r = self._cur.execute('SELECT MAX(instance) FROM kv').fetchone()[0]
 
         return r if r is not None else -1
 
     
-    def iter_updates(self, start_resolution, end_resolution=2**32):
+    def iter_updates(self, start_instance, end_instance=2**32):
         c = self._con.cursor()
-        c.execute('SELECT key,value,resolution FROM kv WHERE resolution>? AND resolution<?  ORDER BY resolution',
-                  (start_resolution, end_resolution))
+        c.execute('SELECT key,value,instance FROM kv WHERE instance>? AND instance<?  ORDER BY instance',
+                  (start_instance, end_instance))
         return c
 
 
@@ -132,7 +134,7 @@ class KeyValNode (multi.MultiPaxosHeartbeatNode):
         
         key, value = json.loads(value[0])
 
-        self.kvdb.onValueSet( key, value, instance_num )
+        self.kvdb.onPaxosResolution( key, value, self.instance )
 
         super(KeyValNode,self).on_resolution(proposer_obj, proposal_id, value)
         
@@ -181,7 +183,7 @@ class KeyValueDB (object):
 
     _node_klass = KeyValNode
     
-    def __init__(self, node_uid,
+    def __init__(self, net_node, quorum_size,
                  database_dir,
                  database_filename=None,
                  catchup_retry_delay=2.0,
@@ -190,15 +192,7 @@ class KeyValueDB (object):
         if database_filename is None:
             database_filename = os.path.join(database_dir, 'db.sqlite')
 
-        if database_filename == ':memory:':
-            durable_dir = None
-            durable_id  = None
-        else:
-            durable_dir = database_dir
-            durable_id  = os.path.basename(database_filename + '.paxos')
-
-        self.node_uid = node_uid
-        self.kv_node = self._node_klass(self, node_uid, durable_dir, durable_id)
+        self.kv_node = self._node_klass(self, net_node, quorum_size)
 
         # By default, prevent arbitrary clients from proposing new
         # configuration values
@@ -208,7 +202,7 @@ class KeyValueDB (object):
         self.catchup_num_items   = catchup_num_items
             
         self.db            = SqliteDB( database_filename )
-        self.db_seq        = self.db.get_last_resolution()
+        self.db_seq        = self.db.get_last_instance()
         self.catching_up   = False
         self.catchup_retry = None
 
@@ -217,6 +211,7 @@ class KeyValueDB (object):
             
         self.rep           = None
         self.dlr           = None
+        self.last_instance = None
 
         if self.isInitialized():
             self._loadConfiguration()
@@ -366,7 +361,7 @@ class KeyValueDB (object):
                         pass
                 self.db.update_key(key, val, seq_num)
                 
-            self.db_seq = self.db.get_last_resolution()
+            self.db_seq = self.db.get_last_instance()
 
         self._catchup()
 
