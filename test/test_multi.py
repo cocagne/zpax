@@ -87,13 +87,13 @@ class HBTestNode(multi.MultiPaxosHeartbeatNode):
         self.dleader_acq = defer.Deferred()
         super(HBTestNode,self).on_leadership_lost(*args)
 
-    def on_resolution(self, proposer_obj, proposal_id, value):
+    def on_resolution(self, proposal_id, value):
         if testhelper.TRACE:
             print self.node_uid, 'Resolution:', proposal_id, value
         #print 'RESOLUTION: ', proposal_id, value
         d = self.dresolution
         self.dresolution = defer.Deferred()
-        super(HBTestNode,self).on_resolution(proposer_obj, proposal_id, value)
+        super(HBTestNode,self).on_resolution(proposal_id, value)
         d.callback((proposal_id, value))
 
 
@@ -282,7 +282,7 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar')),
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
-        
+    
     @defer.inlineCallbacks
     def test_resolution_with_leadership_failure_and_isolated_node(self):
         self.A.pax.acquire_leadership()
@@ -297,7 +297,7 @@ class MultiTesterBase(object):
         self.B.advocate.retry_delay = 0.01
         
         self.B.set_proposal( 'reqid', 'foobar' )
-
+        
         yield delay( 0.05 )
 
         self.assertTrue( not self.A.dresolution.called )
