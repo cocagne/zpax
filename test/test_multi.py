@@ -87,13 +87,13 @@ class HBTestNode(multi.MultiPaxosHeartbeatNode):
         self.dleader_acq = defer.Deferred()
         super(HBTestNode,self).on_leadership_lost(*args)
 
-    def on_resolution(self, proposer_obj, proposal_id, value):
+    def on_resolution(self, proposal_id, value):
         if testhelper.TRACE:
             print self.node_uid, 'Resolution:', proposal_id, value
         #print 'RESOLUTION: ', proposal_id, value
         d = self.dresolution
         self.dresolution = defer.Deferred()
-        super(HBTestNode,self).on_resolution(proposer_obj, proposal_id, value)
+        super(HBTestNode,self).on_resolution(proposal_id, value)
         d.callback((proposal_id, value))
 
 
@@ -175,9 +175,11 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar')),
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
+        #@trace
     @defer.inlineCallbacks
     def test_accept_nack(self):
         self.A.pax.acquire_leadership()
+        
         yield self.A.dleader_acq
 
         d = gatherResults( [self.A.dresolution,

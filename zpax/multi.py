@@ -3,7 +3,8 @@ import random
 
 from twisted.internet import defer, task, reactor
 
-import paxos.heartbeat
+import paxos.functional
+from paxos.functional import ProposalID
 
 from zpax import tzmq
 
@@ -253,16 +254,20 @@ class MultiPaxosNode(object):
     #
     #------------------------------------------------------------------
 
-    def send_prepare(self, proposer_obj, proposal_id):
+    def send_prepare(self, proposal_id):
         self.broadcast( 'prepare', proposal_id = proposal_id )
 
         
     @_mpax_filter
     def receive_prepare(self, from_uid, msg):
-        self.pax.recv_prepare( from_uid, tuple(msg['proposal_id']) )
+        self.pax.recv_prepare( from_uid, ProposalID(*msg['proposal_id']) )
+
+        # TODO: Actual durability implementation
+        if self.pax.persistance_required:
+            self.pax.persisted()
         
 
-    def send_promise(self, proposer_obj, to_uid, proposal_id, previous_id, accepted_value):
+    def send_promise(self, to_uid, proposal_id, previous_id, accepted_value):
         self.unicast( to_uid, 'promise', proposal_id    = proposal_id,
                                          previous_id    = previous_id,
                                          accepted_value = accepted_value )
@@ -270,8 +275,8 @@ class MultiPaxosNode(object):
         
     @_mpax_filter
     def receive_promise(self, from_uid, msg):
-        self.pax.recv_promise( from_uid, tuple(msg['proposal_id']),
-                               tuple(msg['previous_id']) if msg['previous_id'] else None,
+        self.pax.recv_promise( from_uid, ProposalID(*msg['proposal_id']),
+                               ProposalID(*msg['previous_id']) if msg['previous_id'] else None,
                                msg['accepted_value'] )
 
         
@@ -281,45 +286,49 @@ class MultiPaxosNode(object):
         
     @_mpax_filter
     def receive_prepare_nack(self, from_uid, msg):
-        self.pax.recv_prepare_nack( from_uid, tuple(msg['proposal_id']) )
+        self.pax.recv_prepare_nack( from_uid, ProposalID(*msg['proposal_id']) )
 
         
-    def send_accept(self, proposer_obj, proposal_id, proposal_value):
+    def send_accept(self, proposal_id, proposal_value):
         self.broadcast( 'accept', proposal_id    = proposal_id,
                                   proposal_value = proposal_value )
 
 
     @_mpax_filter
     def receive_accept(self, from_uid, msg):
-        self.pax.recv_accept_request( from_uid, tuple(msg['proposal_id']), msg['proposal_value'] )
+        self.pax.recv_accept_request( from_uid, ProposalID(*msg['proposal_id']), msg['proposal_value'] )
+
+        # TODO: Actual durability implementation
+        if self.pax.persistance_required:
+            self.pax.persisted()
 
         
-    def send_accept_nack(self, proposer_obj, to_uid, proposal_id, promised_id):
+    def send_accept_nack(self, to_uid, proposal_id, promised_id):
         self.unicast( to_uid, 'accept_nack', proposal_id = proposal_id,
                                              promised_id = promised_id )
 
 
     @_mpax_filter
     def receive_accept_nack(self, from_uid, msg):
-        self.pax.recv_accept_nack( from_uid, tuple(msg['proposal_id']), tuple(msg['promised_id']) )
+        self.pax.recv_accept_nack( from_uid, ProposalID(*msg['proposal_id']), ProposalID(*msg['promised_id']) )
         
 
-    def send_accepted(self, proposer_obj, to_uid, proposal_id, accepted_value):
+    def send_accepted(self, proposal_id, accepted_value):
         self.broadcast( 'accepted', proposal_id    = proposal_id,
                                     accepted_value = accepted_value )
 
 
     @_mpax_filter
     def receive_accepted(self, from_uid, msg):
-        self.pax.recv_accepted( from_uid, tuple(msg['proposal_id']), msg['accepted_value'] )
+        self.pax.recv_accepted( from_uid, ProposalID(*msg['proposal_id']), msg['accepted_value'] )
 
         
-    def on_leadership_acquired(self, proposer_obj):
+    def on_leadership_acquired(self):
         #print 'LEADERSHIP ACQ: ', self.node_uid
         pass
 
     
-    def on_resolution(self, proposer_obj, proposal_id, value):
+    def on_resolution(self, proposal_id, value):
         self.next_instance()
 
 
@@ -327,8 +336,8 @@ class MultiPaxosNode(object):
         
 class MultiPaxosHeartbeatNode(MultiPaxosNode):
 
-    hb_period       = 60
-    liveness_window = 180
+    hb_period         = 60  # Seconds
+    liveness_window   = 180 # Seconds
 
     hb_poll_task      = None
     leader_pulse_task = None
@@ -377,25 +386,25 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
 
         
     def _new_paxos_node(self):
-        return paxos.heartbeat.HeartbeatNode(self, self.node_uid, self.quorum_size,
-                                             leader_uid      = self.leader_uid,
-                                             hb_period       = self.hb_period,
-                                             liveness_window = self.liveness_window)
+        return paxos.functional.HeartbeatNode(self, self.node_uid, self.quorum_size,
+                                              leader_uid      = self.leader_uid,
+                                              hb_period       = self.hb_period,
+                                              liveness_window = self.liveness_window)
 
     
-    def on_leadership_acquired(self, pax_node_obj):
+    def on_leadership_acquired(self):
         self.leader_pulse_task.start( self.hb_period )
-        super(MultiPaxosHeartbeatNode, self).on_leadership_acquired(pax_node_obj)
+        super(MultiPaxosHeartbeatNode, self).on_leadership_acquired()
 
 
     #------------------------------------------------------------
     #
-    # Messenger methods required by paxos.heartbeat.HeartbeatNode
+    # Messenger methods required by paxos.functional.HeartbeatNode
     #
     #------------------------------------------------------------
 
     
-    def send_heartbeat(self, node_obj, leader_proposal_id):
+    def send_heartbeat(self, leader_proposal_id):
         '''
         Sends a heartbeat message to all nodes
         '''
@@ -405,17 +414,17 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
     def receive_heartbeat(self, from_uid, msg):
         if msg['instance'] > self.instance:
             self.next_instance( set_instance_to = msg['instance'] )
-            self.pax.recv_heartbeat( from_uid, tuple(msg['leader_proposal_id']) )
+            self.pax.recv_heartbeat( from_uid, ProposalID(*msg['leader_proposal_id']) )
             self.behind_in_sequence( msg['instance'] )
         elif msg['instance'] == self.instance:
-            self.pax.recv_heartbeat( from_uid, tuple(msg['leader_proposal_id']) )
+            self.pax.recv_heartbeat( from_uid, ProposalID(*msg['leader_proposal_id']) )
         
 
-    def schedule(self, node_obj,  msec_delay, func_obj):
+    def schedule(self, msec_delay, func_obj):
         pass # we use Twisted's task.LoopingCall mechanism instead
 
         
-    def on_leadership_lost(self, node_obj):
+    def on_leadership_lost(self):
         '''
         Called when loss of leadership is detected
         '''
@@ -423,7 +432,7 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
             self.leader_pulse_task.stop()
 
             
-    def on_leadership_change(self, node_obj, prev_leader_uid, new_leader_uid):
+    def on_leadership_change(self, prev_leader_uid, new_leader_uid):
         '''
         Called when a change in leadership is detected
         '''
