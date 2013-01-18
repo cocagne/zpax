@@ -20,12 +20,6 @@ class InstanceMismatch(ProposalFailed):
         self.current_instance = current
 
 
-class ValueAlreadyProposed(ProposalFailed):
-    
-    def __init__(self):
-        super(ValueAlreadyProposed,self).__init__('Value Already Proposed')
-
-
 class ProposalAdvocate (object):
     '''
     Instances of this class ensure that the leader receives the
@@ -46,7 +40,6 @@ class ProposalAdvocate (object):
         '''
         self.mnode = mnode
         
-
         
     def cancel(self):
         '''
@@ -105,9 +98,6 @@ class ProposalAdvocate (object):
 
             self._send_proposal()
             
-        elif request_id != self.request_id:
-            raise ValueAlreadyProposed()
-
             
     def _send_proposal(self):
         if self.proposal is None:

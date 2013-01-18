@@ -284,7 +284,7 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar')),
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
-        
+    
     @defer.inlineCallbacks
     def test_resolution_with_leadership_failure_and_isolated_node(self):
         self.A.pax.acquire_leadership()
@@ -299,7 +299,7 @@ class MultiTesterBase(object):
         self.B.advocate.retry_delay = 0.01
         
         self.B.set_proposal( 'reqid', 'foobar' )
-
+        
         yield delay( 0.05 )
 
         self.assertTrue( not self.A.dresolution.called )
