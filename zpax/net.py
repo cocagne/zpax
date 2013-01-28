@@ -31,7 +31,13 @@ class NetworkNode (object):
         self.pax_pub          = None
         self.pax_sub          = None
         self.encoder          = encoder
-        self.message_handlers = list()
+        self.message_handlers = dict() # Dictionary of channel_name => list( message_handlers )
+
+        
+    def add_message_handler(self, channel_name, handler):
+        if not channel_name in self.message_handlers:
+            self.message_handlers[ channel_name ] = list()
+        self.message_handlers[channel_name].append( handler )
         
 
     def connect(self, zpax_nodes):
@@ -85,41 +91,45 @@ class NetworkNode (object):
         self.pax_sub = None
 
 
-    def broadcast_message(self, message_type, *parts):
+    def broadcast_message(self, channel_name, message_type, *parts):
         if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
             parts = parts[0]
-        l = ['zpax']
+        l = ['zpax', channel_name]
         l.extend( self.encoder.encode(self.node_uid, message_type, parts) )
         self.pax_pub.send( l )
 
 
-    def unicast_message(self, to_uid, message_type, *parts):
+    def unicast_message(self, to_uid, channel_name, message_type, *parts):
         if to_uid == self.node_uid:
-            self.dispatch_message( self.node_uid, message_type, parts )
+            self.dispatch_message( self.node_uid, channel_name, message_type, parts )
             return
         if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
             parts = parts[0]
-        l = [str(to_uid)]
+        l = [str(to_uid), channel_name]
         l.extend( self.encoder.encode(self.node_uid, message_type, parts) )
         self.pax_rtr.send( l )
 
 
-    def _dispatch_message(self, from_uid, message_type, parts):
-        for h in self.message_handlers:
-            f = getattr(h, 'receive_' + message_type, None)
-            if f:
-                f(from_uid, *parts)
-                break
+    def _dispatch_message(self, from_uid, channel_name, message_type, parts):
+        handlers = self.message_handlers.get(channel_name, None)
+        if handlers:
+            for h in handlers:
+                f = getattr(h, 'receive_' + message_type, None)
+                if f:
+                    f(from_uid, *parts)
+                    break
             
     def _on_rtr_received(self, raw_parts):
         # discard source address. We'll use the one embedded in the message
         # for consistency
-        from_uid, message_type, parts = self.encoder.decode( raw_parts[1:] )
-        self._dispatch_message( from_uid, message_type, parts )
+        channel_name = raw_parts[1]
+        from_uid, message_type, parts = self.encoder.decode( raw_parts[2:] )
+        self._dispatch_message( from_uid, channel_name, message_type, parts )
 
         
     def _on_sub_received(self, raw_parts):
         # discard the message header. Can address targeted subscriptions
         # later
-        from_uid, message_type, parts = self.encoder.decode( raw_parts[1:] )
-        self._dispatch_message( from_uid, message_type, parts )
+        channel_name = raw_parts[1]
+        from_uid, message_type, parts = self.encoder.decode( raw_parts[2:] )
+        self._dispatch_message( from_uid, channel_name, message_type, parts )

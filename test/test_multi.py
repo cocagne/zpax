@@ -458,6 +458,7 @@ class HeartbeatTester(MultiTesterBase, unittest.TestCase):
         for uid in all_nodes:
 
             self.nodes[uid] =  HBTestNode( testhelper.NetworkNode(uid),
+                                           'test_channel',
                                            2,
                                            hb_period       = 0.01,
                                            liveness_window = 0.03 )

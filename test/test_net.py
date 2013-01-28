@@ -95,10 +95,10 @@ class NetworkNodeTesterBase(object):
 
         for n in all_nodes:
             msgs[ n ] = list()
-            self.nodes[n].message_handlers.append( H(n) )
+            self.nodes[n].add_message_handler('test_channel', H(n))
             
         def s(src, dst, msg):
-            self.nodes[src].unicast_message(dst, 'foomsg', msg)
+            self.nodes[src].unicast_message(dst, 'test_channel', 'foomsg', msg)
 
         s('A', 'B', 'AB')
         s('A', 'C', 'AC')
@@ -136,10 +136,10 @@ class NetworkNodeTesterBase(object):
 
         for n in all_nodes:
             msgs[ n ] = list()
-            self.nodes[n].message_handlers.append( H(n) )
+            self.nodes[n].add_message_handler('test_channel', H(n))
             
         def s(src, dst, msg0, msg1, msg2):
-            self.nodes[src].unicast_message(dst, 'foomsg', msg0, msg1, msg2)
+            self.nodes[src].unicast_message(dst, 'test_channel', 'foomsg', msg0, msg1, msg2)
 
         s('A', 'B', 'AB', 'foo', 'bar')
 
@@ -174,10 +174,10 @@ class NetworkNodeTesterBase(object):
 
         for n in all_nodes:
             msgs[ n ] = list()
-            self.nodes[n].message_handlers.append( H(n) )
+            self.nodes[n].add_message_handler('test_channel', H(n))
             
         def s(src, msg):
-            self.nodes[src].broadcast_message('foomsg', msg)
+            self.nodes[src].broadcast_message('test_channel', 'foomsg', msg)
 
         s('A', 'msgA')
         s('B', 'msgB')
@@ -213,23 +213,23 @@ class NetworkNodeTesterBase(object):
 
         for n in all_nodes:
             msgs[ n ] = list()
-            self.nodes[n].message_handlers.append( H(n) )
+            self.nodes[n].add_message_handler('test_channel', H(n))
 
 
         class H2(object):
             def receive_special(self, from_uid, arg):
                 msgs['C'].append( (from_uid, 'special', arg) )
 
-        self.nodes['C'].message_handlers.append( H2() )
+        self.nodes['C'].add_message_handler( 'test_channel', H2() )
             
         def s(src, msg):
-            self.nodes[src].broadcast_message('foomsg', msg)
+            self.nodes[src].broadcast_message('test_channel', 'foomsg', msg)
 
         s('A', 'msgA')
         s('B', 'msgB')
         s('C', 'msgC')
 
-        self.nodes['A'].broadcast_message('special', 'blah')
+        self.nodes['A'].broadcast_message('test_channel', 'special', 'blah')
 
         yield self.delay(0.05) # process messages
 

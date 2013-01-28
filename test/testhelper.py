@@ -9,19 +9,19 @@ def setup():
     nodes.clear()
 
 
-def broadcast_message( src_uid, message_type, *parts ):
+def broadcast_message( src_uid, channel_name, message_type, *parts ):
     if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
         parts = parts[0]
     for n in nodes.values():
         if n.link_up:
-            n.recv_message( src_uid, message_type, parts )
+            n.recv_message( src_uid, channel_name, message_type, parts )
             
 
-def unicast_message( src_uid, dst_uid, message_type, *parts ):
+def unicast_message( src_uid, dst_uid, channel_name, message_type, *parts ):
     if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
         parts = parts[0]
     if dst_uid in nodes:
-        nodes[dst_uid].recv_message( src_uid, message_type, parts )
+        nodes[dst_uid].recv_message( src_uid, channel_name, message_type, parts )
 
 
 
@@ -32,8 +32,14 @@ class NetworkNode (object):
 
         self.node_uid         = node_uid
         self.zpax_nodes       = None # Dictionary of node_uid -> (rtr_addr, pub_addr)
-        self.message_handlers = list()
+        self.message_handlers = dict()
         self.link_up          = False
+
+
+    def add_message_handler(self, channel_name, handler):
+        if not channel_name in self.message_handlers:
+            self.message_handlers[ channel_name ] = list()
+        self.message_handlers[channel_name].append( handler )
         
 
     def connect(self, zpax_nodes):
@@ -48,25 +54,27 @@ class NetworkNode (object):
             del nodes[ self.node_uid ]
 
 
-    def _dispatch_message(self, from_uid, message_type, parts):
-        for h in self.message_handlers:
-            f = getattr(h, 'receive_' + message_type, None)
-            if f:
-                f(from_uid, *parts)
-                break
+    def _dispatch_message(self, from_uid, channel_name, message_type, parts):
+        handlers = self.message_handlers.get(channel_name, None)
+        if handlers:
+            for h in handlers:
+                f = getattr(h, 'receive_' + message_type, None)
+                if f:
+                    f(from_uid, *parts)
+                    break
 
 
-    def recv_message(self, src_uid, message_type, parts):
+    def recv_message(self, src_uid, channel_name, message_type, parts):
         if self.link_up:
             if TRACE:
-                print src_uid, '=>', self.node_uid, '[rcv]', message_type.ljust(15), parts
-            self._dispatch_message( src_uid, message_type, parts )
+                print src_uid, '=>', self.node_uid, '[rcv]', '[{0}]'.format(channel_name), message_type.ljust(15), parts
+            self._dispatch_message( src_uid, channel_name, message_type, parts )
         else:
             if TRACE:
-                print src_uid, '=>', self.node_uid, '[drp]', message_type.ljust(15), parts
+                print src_uid, '=>', self.node_uid, '[drp]', '[{0}]'.format(channel_name), message_type.ljust(15), parts
 
 
-    def broadcast_message(self, message_type, *parts):
+    def broadcast_message(self, channel_name, message_type, *parts):
         if not self.link_up:
             return
         
@@ -74,10 +82,10 @@ class NetworkNode (object):
             parts = parts[0]
         if isinstance(parts, tuple):
             parts = list(parts)
-        broadcast_message(self.node_uid, message_type, parts)
+        broadcast_message(self.node_uid, channel_name, message_type, parts)
 
 
-    def unicast_message(self, to_uid, message_type, *parts):
+    def unicast_message(self, to_uid, channel_name, message_type, *parts):
         if not self.link_up:
             return
         
@@ -85,5 +93,5 @@ class NetworkNode (object):
             parts = parts[0]
         if isinstance(parts, tuple):
             parts = list(parts)
-        unicast_message(self.node_uid, to_uid, message_type, parts)
+        unicast_message(self.node_uid, to_uid, channel_name, message_type, parts)
 

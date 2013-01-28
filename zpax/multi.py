@@ -121,9 +121,10 @@ class ProposalAdvocate (object):
         
 class MultiPaxosNode(object):
 
-    def __init__(self, net_node, quorum_size):
+    def __init__(self, net_node, net_channel, quorum_size):
         self.net         = net_node
         self.node_uid    = net_node.node_uid
+        self.net_channel = net_channel
         self.quorum_size = quorum_size
         self.instance    = 0
         self.leader_uid  = None
@@ -133,8 +134,8 @@ class MultiPaxosNode(object):
 
         self.instance_exceptions  = set() # message types that should be processed
                                           # even if the instance number is not current
-                                          
-        self.net.message_handlers.append(self)
+
+        self.net.add_message_handler(self.net_channel, self)
 
         self.next_instance()
         
@@ -185,12 +186,12 @@ class MultiPaxosNode(object):
 
     def broadcast(self, msg_type, **kwargs):
         kwargs.update( dict(instance=self.instance) )
-        self.net.broadcast_message(msg_type, kwargs)
+        self.net.broadcast_message(self.net_channel, msg_type, kwargs)
 
         
     def unicast(self, dest_uid, msg_type, **kwargs):
         kwargs.update( dict(instance=self.instance) )
-        self.net.unicast_message(dest_uid, msg_type, kwargs)
+        self.net.unicast_message(dest_uid, self.net_channel, msg_type, kwargs)
         
     
     def behind_in_sequence(self, current_instance):
