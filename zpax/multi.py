@@ -332,6 +332,7 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
 
     hb_poll_task      = None
     leader_pulse_task = None
+    is_leader         = False
 
     def __init__(self, *args, **kwargs):
 
@@ -384,6 +385,7 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
 
     
     def on_leadership_acquired(self):
+        self.is_leader = True
         self.leader_pulse_task.start( self.hb_period )
         super(MultiPaxosHeartbeatNode, self).on_leadership_acquired()
 
@@ -419,6 +421,7 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         '''
         Called when loss of leadership is detected
         '''
+        self.is_leader = False
         if self.leader_pulse_task.running:
             self.leader_pulse_task.stop()
 
