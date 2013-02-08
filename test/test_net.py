@@ -13,9 +13,7 @@ this_dir = pd(os.path.abspath(__file__))
 sys.path.append( pd(this_dir) )
 
 
-from zpax import net
-
-import testhelper
+from zpax import net, testhelper
 
 
 def delay(t):

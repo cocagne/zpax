@@ -15,9 +15,8 @@ sys.path.append( pd(this_dir) )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
 
-from zpax import multi
+from zpax import multi, testhelper
 
-import testhelper
 
 
 def delay(t):
