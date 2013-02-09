@@ -9,6 +9,33 @@ def setup():
     nodes.clear()
 
 
+try:
+    defer.gatherResults( [defer.succeed(None),], consumeErrors=True )
+    use_consume = True
+except TypeError:
+    use_consume = False
+
+def gatherResults( l ):
+    if use_consume:
+        return defer.gatherResults(l, consumeErrors=True)
+    else:
+        return defer.gatherResults(l)
+
+
+def trace_messages( fn ):
+    @defer.inlineCallbacks
+    def wrapit(self, *args, **kwargs):
+        global TRACE
+        TRACE = True
+        print ''
+        print 'Trace:'
+        yield fn(self, *args, **kwargs)
+        TRACE = False
+        print ''
+    return wrapit
+
+
+
 def broadcast_message( src_uid, channel_name, message_type, *parts ):
     if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
         parts = parts[0]

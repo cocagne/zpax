@@ -17,6 +17,7 @@ sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
 from zpax import multi, testhelper
 
+from zpax.testhelper import gatherResults, trace_messages
 
 
 def delay(t):
@@ -27,29 +28,6 @@ def delay(t):
     
 all_nodes = 'A B C'.split()
 
-try:
-    defer.gatherResults( [defer.succeed(None),], consumeErrors=True )
-    use_consume = True
-except TypeError:
-    use_consume = False
-
-def gatherResults( l ):
-    if use_consume:
-        return defer.gatherResults(l, consumeErrors=True)
-    else:
-        return defer.gatherResults(l)
-
-
-def trace( fn ):
-    @defer.inlineCallbacks
-    def wrapit(self, *args, **kwargs):
-        testhelper.TRACE = True
-        print ''
-        print 'Trace:'
-        yield fn(self, *args, **kwargs)
-        testhelper.TRACE = False
-        print ''
-    return wrapit
     
 
 class HBTestNode(multi.MultiPaxosHeartbeatNode):
@@ -122,13 +100,13 @@ class MultiTesterBase(object):
         pass
 
 
-    #    @trace
+    #    @trace_messages
     @defer.inlineCallbacks
     def test_initial_leadership_acquisition(self):
         self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
-        #@trace
+        #@trace_messages
     @defer.inlineCallbacks
     def test_leadership_recovery_on_failure(self):
         self.A.pax.acquire_leadership()
@@ -174,7 +152,7 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar')),
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
-        #@trace
+        #@trace_messages
     @defer.inlineCallbacks
     def test_accept_nack(self):
         self.A.pax.acquire_leadership()
@@ -222,7 +200,7 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
 
-        #@trace
+        #@trace_messages
     @defer.inlineCallbacks
     def test_proposal_advocate_retry(self):
         self.A.pax.acquire_leadership()
@@ -251,7 +229,7 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
 
-        #@trace
+        #@trace_messages
     @defer.inlineCallbacks
     def test_proposal_advocate_retry_with_crash_recovery(self):
         self.A.pax.acquire_leadership()
