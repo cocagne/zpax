@@ -53,7 +53,7 @@ import paxos.practical
 from   paxos.practical import ProposalID
 
 
-class TxResultsCache(object):
+class TransactionHistory(object):
 
     max_entries = 1000
     
@@ -67,7 +67,7 @@ class TxResultsCache(object):
         if len(self.recent_list) > self.max_entries:
             del self.recent_map[ self.recent_list.pop(0) ]
 
-    def check(self, tx_uuid):
+    def lookup(self, tx_uuid):
         return self.recent_map.get(tx_uuid, None)
 
 
@@ -98,9 +98,11 @@ class TransactionManager (object):
     
     '''
 
-    timeout_duration = 30.0 # seconds
+    timeout_duration   = 30.0 # seconds
 
-    get_current_time = time.time
+    get_current_time   = time.time
+
+    tx_history_factory = TransactionHistory
 
     # all_node_ids = set() of node ids
     def __init__(self, net_node, channel_name, node_uid,
@@ -113,7 +115,7 @@ class TransactionManager (object):
         self.threshold     = threshold
         self.durable       = durable
         self.transactions  = dict()       # uuid => Transaction instance
-        self.results_cache = TxResultsCache()
+        self.results_cache = self.tx_history_factory()
 
         self.net.add_message_handler( self.channel_name, self )
 
@@ -130,7 +132,7 @@ class TransactionManager (object):
     def get_result(self, tx_uuid):
         d = defer.Deferred()
         
-        r = self.results_cache.check(tx_uuid)
+        r = self.results_cache.lookup(tx_uuid)
         if r:
             d.callback(r)
             return d
@@ -147,7 +149,7 @@ class TransactionManager (object):
     def propose_result(self, tx_uuid, result, **kwargs):
         assert result in ('commit', 'abort')
 
-        r = self.results_cache.check(tx_uuid)
+        r = self.results_cache.lookup(tx_uuid)
         if r:
             return defer.succeed( (tx_uuid, r) )
         
@@ -163,7 +165,7 @@ class TransactionManager (object):
         
     def get_transaction_node(self, from_uid, msg):
         try:
-            uuid    = msg['tx_uuid']
+            tx_uuid = msg['tx_uuid']
             tx_node = msg['tx_node']
         except KeyError:
             return
@@ -172,20 +174,20 @@ class TransactionManager (object):
         if not tx_node in self.all_node_ids:
             return
         
-        tx = self.transactions.get(uuid, None)
+        tx = self.transactions.get(tx_uuid, None)
 
         if tx is not None:
             return tx.tx_nodes[ tx_node ]
         
-        r = self.results_cache.check( uuid )
+        r = self.results_cache.lookup( tx_uuid )
         
         if r is not None:
             self.net.unicast_message(from_uid, self.channel_name,
                                      'transaction_result',
-                                     dict( tx_uuid=uuid, result=r ))
+                                     dict( tx_uuid=tx_uuid, result=r ))
             return
         
-        tx = self.create_transaction( uuid, msg )
+        tx = self.create_transaction( tx_uuid, msg )
 
         if tx is None:
             return
@@ -193,28 +195,28 @@ class TransactionManager (object):
         return tx.tx_nodes[ tx_node ]
 
         
-    def create_transaction(self, uuid, msg):
-        tx =  Transaction(self, uuid,
+    def create_transaction(self, tx_uuid, msg):
+        tx =  Transaction(self, tx_uuid,
                           self.get_current_time() + self.timeout_duration,
                           self.node_uid,
                           self.quorum_size, self.threshold)
-        self.transactions[ uuid ] = tx
+        self.transactions[ tx_uuid ] = tx
         tx.dcomplete.addCallback( self.transaction_complete )
         return tx
 
     
     def transaction_complete(self, tpl):
-        uuid, result = tpl
-        del self.transactions[ uuid ]
-        self.results_cache.add( uuid, result )
+        tx_uuid, result = tpl
+        del self.transactions[ tx_uuid ]
+        self.results_cache.add( tx_uuid, result )
         return tpl
 
     
     def receive_transaction_result(self, from_uid, msg):
         try:
-            uuid   = msg['uuid']
-            result = msg['result']
-            tx     = self.transactions[ uuid ]
+            tx_uuid = msg['tx_uuid']
+            result  = msg['result']
+            tx      = self.transactions[ tx_uuid ]
         except KeyError:
             return
         
