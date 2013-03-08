@@ -131,12 +131,13 @@ class ZmqSocket(object):
 
     
     linger     = _sockopt_property( constants.LINGER         )
-    mcast_loop = _sockopt_property( constants.MCAST_LOOP     )
     rate       = _sockopt_property( constants.RATE           )
-    hwm        = _sockopt_property( constants.HWM            )
     identity   = _sockopt_property( constants.IDENTITY,  str )
     subscribe  = _sockopt_property( constants.SUBSCRIBE, str )
 
+    # Removed in 3.2
+    #   mcast_loop = _sockopt_property( constants.MCAST_LOOP     )
+    #   hwm        = _sockopt_property( constants.HWM            )
 
     def close(self):
         self._ctx.reactor.removeReader(self)
@@ -224,8 +225,13 @@ class ZmqSocket(object):
                 # This exception can be thrown during socket closing process
                 if e.errno == 156384763 or str(e) == 'Operation cannot be accomplished in current state':
                     break
-                
+
+                # Seen in 3.2 for an unknown reason
+                if e.errno == 95:
+                    break
+
                 raise e
+                
 
             
     

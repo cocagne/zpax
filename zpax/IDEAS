@@ -1,5 +1,0 @@
-* Buffered key=value assignments. Writes to different keys guarantee not to
-  conflict.
-
-* Multi-key commit: Check all key-sequence numbers in request match the current
-  db state. If so, pass though to paxos for decision. If not, send nack.
