@@ -18,6 +18,8 @@ sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
 from zpax import keyval, multi, tzmq, testhelper
 
+from zpax.testhelper import trace_messages
+
 
 def delay(t):
     d = defer.Deferred()
@@ -32,25 +34,30 @@ class TestReq (object):
 
     def __init__(self, channel='test_channel.kv', node_id='client'):
         self.net = testhelper.NetworkNode(node_id)
+        self.channel = channel
         self.net.add_message_handler(channel, self)
         self.net.connect([])
+
+    def close(self):
+        if self.d is not None and not self.d.called:
+            self.d.cancel()
     
-    def propose(self, to_id, key, value):
+    def propose(self, to_id, key, value, req_id='req_id'):
         self.d = defer.Deferred()
-        self.net.unicast(to_id, 'propose_value', key=key, value=value)
+        self.net.unicast_message(to_id, self.channel, 'propose_value', dict(key=key, value=value, request_id=req_id))
         return self.d
 
-    def query(self, to_id, key):
+    def query(self, to_id, key, req_id='req_id'):
         self.d = defer.Deferred()
-        self.net.unicast(to_id, 'query_value', key=key)
+        self.net.unicast_message(to_id, self.channel, 'query_value', dict(key=key, request_id=req_id))
         return self.d
 
     def receive_propose_reply(self, from_uid, msg):
-        print 'Propose Reply Received:', msg
+        #print 'Propose Reply Received:', msg
         self.d.callback(msg)
 
     def receive_query_result(self, from_uid, msg):
-        print 'Query Result Received:', msg
+        #print 'Query Result Received:', msg
         self.d.callback(msg)
         
 
@@ -78,12 +85,12 @@ class KeyValueDBTester(unittest.TestCase):
         nodes = list()
         
         for uid in self.all_nodes:
-            pax_rep = 'ipc:///tmp/ts_{}_pax_rep'.format(uid)
+            pax_rtr = 'ipc:///tmp/ts_{}_pax_rtr'.format(uid)
             pax_pub = 'ipc:///tmp/ts_{}_pax_pub'.format(uid)
             kv_rep  = 'ipc:///tmp/ts_{}_kv_rep'.format(uid)
             nodes.append( dict(uid          = uid,
                                pax_pub_addr = pax_pub,
-                               pax_rep_addr = pax_rep,
+                               pax_rtr_addr = pax_rtr,
                                kv_rep_addr  = kv_rep) )
             
         return json.dumps( dict( nodes = nodes ) )
@@ -126,15 +133,17 @@ class KeyValueDBTester(unittest.TestCase):
             n = keyval.KeyValueDB(testhelper.NetworkNode(node_name),
                                   'test_channel',
                                   2,
-                                  self.tdir, os.path.join(self.tdir, node_name + '.sqlite'))
+                                  self.tdir, os.path.join(self.tdir, node_name + '.sqlite'),
+                                  hb_period = 0.05,
+                                  liveness_window = 0.15)
 
             n.allow_config_proposals = True
 
-            n.kv_node.onLeadershipAcquired = gen_cb(node_name, self._on_leader_acq)
-            n.kv_node.onLeadershipLost     = gen_cb(node_name, self._on_leader_lost)
+            n.kv_node.on_leadership_acquired = gen_cb(node_name, self._on_leader_acq)
+            n.kv_node.on_leadership_lost     = gen_cb(node_name, self._on_leader_lost)
 
-            n.hb_period       = 0.05
-            n.liveness_window = 0.15
+            n.kv_node.hb_period       = 0.05
+            n.kv_node.liveness_window = 0.15
 
             n.name = node_name
 
@@ -143,7 +152,7 @@ class KeyValueDBTester(unittest.TestCase):
             
             self.nodes[node_name] = n
 
-            if not n.isInitialized():
+            if not n.initialized:
                 n.initialize( self.json_config )
 
 
@@ -187,12 +196,14 @@ class KeyValueDBTester(unittest.TestCase):
         return d
     
 
+    #@trace_messages
     @defer.inlineCallbacks
     def test_initial_leader(self):
         self.start('a b')
         yield self.dleader
 
 
+    #@trace_messages
     @defer.inlineCallbacks
     def test_set_key_val_pair(self):
         self.start('a b')
@@ -216,31 +227,31 @@ class KeyValueDBTester(unittest.TestCase):
         self.start('a b')
 
         d = defer.Deferred()
-        c = self.new_client('a')
+        c = self.new_client()
 
         yield self.dleader
 
-        yield self.set_key(c, 'foo0', 'bar')
-        yield self.set_key(c, 'foo1', 'bar')
-        yield self.set_key(c, 'foo2', 'bar')
-        yield self.set_key(c, 'foo3', 'bar')
-        yield self.set_key(c, 'foo4', 'bar')
-        yield self.set_key(c, 'foo5', 'bar')
-        yield self.set_key(c, 'foo6', 'bar')
-        yield self.set_key(c, 'foo7', 'bar')
-        yield self.set_key(c, 'foo8', 'bar')
-        yield self.set_key(c, 'foo9', 'bar')
+        yield self.set_key(c, 'a', 'foo0', 'bar')
+        yield self.set_key(c, 'a', 'foo1', 'bar')
+        yield self.set_key(c, 'a', 'foo2', 'bar')
+        yield self.set_key(c, 'a', 'foo3', 'bar')
+        yield self.set_key(c, 'a', 'foo4', 'bar')
+        yield self.set_key(c, 'a', 'foo5', 'bar')
+        yield self.set_key(c, 'a', 'foo6', 'bar')
+        yield self.set_key(c, 'a', 'foo7', 'bar')
+        yield self.set_key(c, 'a', 'foo8', 'bar')
+        yield self.set_key(c, 'a', 'foo9', 'bar')
 
-        yield self.set_key(c, 'foo0', 'baz')
-        yield self.set_key(c, 'foo1', 'baz')
-        yield self.set_key(c, 'foo2', 'baz')
-        yield self.set_key(c, 'foo3', 'baz')
-        yield self.set_key(c, 'foo4', 'baz')
-        yield self.set_key(c, 'foo5', 'baz')
-        yield self.set_key(c, 'foo6', 'baz')
-        yield self.set_key(c, 'foo7', 'baz')
-        yield self.set_key(c, 'foo8', 'baz')
-        yield self.set_key(c, 'foo9', 'baz')
+        yield self.set_key(c, 'a', 'foo0', 'baz')
+        yield self.set_key(c, 'a', 'foo1', 'baz')
+        yield self.set_key(c, 'a', 'foo2', 'baz')
+        yield self.set_key(c, 'a', 'foo3', 'baz')
+        yield self.set_key(c, 'a', 'foo4', 'baz')
+        yield self.set_key(c, 'a', 'foo5', 'baz')
+        yield self.set_key(c, 'a', 'foo6', 'baz')
+        yield self.set_key(c, 'a', 'foo7', 'baz')
+        yield self.set_key(c, 'a', 'foo8', 'baz')
+        yield self.set_key(c, 'a', 'foo9', 'baz')
 
     @defer.inlineCallbacks
     def test_shutdown_and_restart(self):
@@ -251,8 +262,8 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield self.dleader
         
-        yield self.set_key(c, 'foo0', 'bar')
-        yield self.set_key(c, 'foo1', 'bar')
+        yield self.set_key(c, 'a', 'foo0', 'bar')
+        yield self.set_key(c, 'a', 'foo1', 'bar')
 
         self.stop('a b')
 
@@ -264,11 +275,11 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield self.dleader
 
-        v = yield self.get_key(c, 'foo0')
+        v = yield self.get_key(c, 'a', 'foo0')
 
         self.assertEquals(v, 'bar')
 
-        yield self.set_key(c, 'foo1', 'baz')
+        yield self.set_key(c, 'a', 'foo1', 'baz')
 
 
     @defer.inlineCallbacks
@@ -280,7 +291,7 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield self.dleader
         
-        yield self.set_key(c, 'foo0', 'bar')
+        yield self.set_key(c, 'a', 'foo0', 'bar')
 
         self.stop('b')
 
@@ -300,7 +311,7 @@ class KeyValueDBTester(unittest.TestCase):
 
         v = None
         while v != 'bar':
-            v = yield self.get_key(c, 'foo1')
+            v = yield self.get_key(c, 'a', 'foo1')
             yield delay(0.01)
 
         self.assertEquals(v, 'bar')
@@ -317,12 +328,12 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield self.dleader
 
-        yield self.set_key(c, 'foo', 'bar')
+        yield self.set_key(c, 'a', 'foo', 'bar')
         
         # Add a node to config
         self.all_nodes.append('d')
         
-        yield self.set_key(c, keyval._ZPAX_CONFIG_KEY, self.json_config)
+        yield self.set_key(c, 'a', keyval._ZPAX_CONFIG_KEY, self.json_config)
         
         # Quorum is now 3. No changes can be made until 3 functioning nodes
         # are up. Start the newly added node to reach a total of three then
@@ -334,7 +345,7 @@ class KeyValueDBTester(unittest.TestCase):
         yield dcaughtup
 
         print 'Trying to set key with quorum 3'
-        yield self.set_key(c, 'test_key', 'foo')
+        yield self.set_key(c, 'a', 'test_key', 'foo')
 
         print 'Done!!!'
 
@@ -342,21 +353,21 @@ class KeyValueDBTester(unittest.TestCase):
     @defer.inlineCallbacks
     def test_dynamic_add_node(self, chatty=False):
 
-        self.start('a c', chatty=chatty)
+        self.start('a c')
 
         d = defer.Deferred()
-        c = self.new_client('a')
+        c = self.new_client()
 
         yield self.dleader
 
-        yield self.set_key(c, 'foo', 'bar')
+        yield self.set_key(c, 'a', 'foo', 'bar')
         
         # Add a node to config
         self.all_nodes.append('d')
 
         #print '*'*30
         
-        yield self.set_key(c, keyval._ZPAX_CONFIG_KEY, self.json_config)
+        yield self.set_key(c, 'a', keyval._ZPAX_CONFIG_KEY, self.json_config)
 
         # Quorum is now 3. No changes can be made until 3 functioning nodes
         # are up. Start the newly added node to reach a total of three then
@@ -375,8 +386,8 @@ class KeyValueDBTester(unittest.TestCase):
         #print '*'*30
 
         # Trying to set key with quorum 3
-        yield self.set_key(c, 'test_key', 'foo')
-        yield self.set_key(c, 'test_key2', 'foo')
+        yield self.set_key(c, 'a', 'test_key', 'foo')
+        yield self.set_key(c, 'a', 'test_key2', 'foo')
         defer.returnValue(c)
         
 
@@ -384,7 +395,7 @@ class KeyValueDBTester(unittest.TestCase):
     def test_dynamic_remove_node(self):
         c = yield self.test_dynamic_add_node()
 
-        #yield self.set_key(c, 'test_key2', 'foo')
+        #yield self.set_key(c, 'a', 'test_key2', 'foo')
         #print 'Node added', self.json_config
         self.all_nodes.remove('c')
         #print '*********'
@@ -392,15 +403,15 @@ class KeyValueDBTester(unittest.TestCase):
 
         #print  'Setting removed config'
 
-        yield self.set_key(c, 'test_key3', 'foo')
+        yield self.set_key(c, 'a', 'test_key3', 'foo')
         
-        yield self.set_key(c, keyval._ZPAX_CONFIG_KEY, self.json_config)
+        yield self.set_key(c, 'a', keyval._ZPAX_CONFIG_KEY, self.json_config)
 
         self.stop('c')
 
         #print 'Trying with quorum 2'
         # Trying to set key with quorum 2
-        yield self.set_key(c, 'test_remove', 'foo')
+        yield self.set_key(c, 'a', 'test_remove', 'foo')
 
         #print 'REMOVE COMPLETE'
         
@@ -414,9 +425,9 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield self.dleader
 
-        yield self.set_key(c, 'foo', 'bar')
-        yield self.set_key(c, 'baz', 'bish')
-        yield self.set_key(c, 'william', 'wallace')
+        yield self.set_key(c, 'a', 'foo', 'bar')
+        yield self.set_key(c, 'a', 'baz', 'bish')
+        yield self.set_key(c, 'a', 'william', 'wallace')
 
         dcaughtup = defer.Deferred()
         

@@ -92,7 +92,7 @@ class SqliteDB (object):
     def get_last_instance(self):
         r = self._cur.execute('SELECT MAX(instance) FROM kv').fetchone()[0]
 
-        return r if r is not None else -1
+        return r if r is not None else 0
 
     
     def iter_updates(self, start_instance, end_instance=2**32):
@@ -114,10 +114,11 @@ class KeyValNode (multi.MultiPaxosHeartbeatNode):
     from entering the database in an out-of-order manner.
     '''
 
-    def __init__(self, kvdb, net_node, channel_name, quorum_size):
-        super(KeyValNode,self).__init__(net_node, quorum_size)
+    def __init__(self, kvdb, net_node, channel_name, quorum_size, **kwargs):
+        super(KeyValNode,self).__init__(net_node, channel_name, quorum_size, **kwargs)
         self.kvdb = kvdb
         self.net  = net_node
+        self.net.add_message_handler(channel_name, self)
 
 
     def receive_heartbeat(self, from_uid, kw):
@@ -130,16 +131,24 @@ class KeyValNode (multi.MultiPaxosHeartbeatNode):
             self.kvdb.catchup(kw['instance'])
         
 
-    def on_resolution(self, proposer_obj, proposal_id, value):
+    def on_resolution(self, proposal_id, tpl):
         # This method is only called when our database is current
         assert self.instance == self.kvdb.last_instance + 1
-        
-        key, value = json.loads(value[1])
+
+        key, value = tpl
 
         self.kvdb.on_paxos_resolution( key, value, self.instance )
 
-        super(KeyValNode,self).on_resolution(proposer_obj, proposal_id, value)
+        super(KeyValNode,self).on_resolution(proposal_id, value)
+
         
+    def on_leadership_acquired(self):
+        super(KeyValNode, self).on_leadership_acquired(self)
+        self.kvdb.on_leadership_acquired()
+
+    def on_leadership_lost(self):
+        super(KeyValNode, self).on_leadership_lost(self)
+        self.kvdb.on_leadership_lost()
 
 
 
@@ -188,7 +197,8 @@ class KeyValueDB (object):
     
     def __init__(self, net_node, net_channel, quorum_size,
                  database_dir,
-                 database_filename=None):
+                 database_filename=None,
+                 **kwargs):
 
         if database_filename is None:
             database_filename = os.path.join(database_dir, 'db.sqlite')
@@ -197,17 +207,17 @@ class KeyValueDB (object):
         # configuration values
         self.allow_config_proposals = False
 
-        self.db            = SqliteDB( database_filename )
-        self.last_instance = self.db.get_last_instance()
-        self.catching_up   = False
-        self.catchup_retry = None
-        self.active_instance = None
+        self.db               = SqliteDB( database_filename )
+        self.last_instance    = self.db.get_last_instance()
+        self.catching_up      = False
+        self.catchup_retry    = None
+        self.active_instance  = None
 
-        self.kv_node = KeyValNode(self, net_node, net_channel + '.paxos', quorum_size)
-        self.net     = net_node
+        self.kv_node  = KeyValNode(self, net_node, net_channel + '.paxos', quorum_size, **kwargs)
+        self.net      = net_node
 
         self.net_channel = net_channel + '.kv'
-        self.net.message_handler.append(self.net_channel, self)
+        self.net.add_message_handler(self.net_channel, self)
 
         if self.initialized:
             self._load_configuration()
@@ -236,7 +246,7 @@ class KeyValueDB (object):
             print 'This node has been removed from the Paxos group'
             self.shutdown()
 
-        self.net_node.connect( zpax_nodes )
+        self.net.connect( zpax_nodes )
 
 
     @property
@@ -248,7 +258,7 @@ class KeyValueDB (object):
         if self.initialized:
             raise Exception('Node already initialized')
         
-        self.db.update_key(_ZPAX_CONFIG_KEY, config_str, -1)
+        self.db.update_key(_ZPAX_CONFIG_KEY, config_str, 0)
         self._load_configuration()
 
                 
@@ -266,6 +276,13 @@ class KeyValueDB (object):
         
         if key == _ZPAX_CONFIG_KEY:
             self._load_configuration()
+
+
+    def on_leadership_acquired(self):
+        pass
+
+    def on_leadership_lost(self):
+        pass
         
 
     def catchup(self, active_instance):
@@ -294,7 +311,7 @@ class KeyValueDB (object):
     # Messaging
     #           
     def unicast(self, to_uid, message_type, **kwargs):
-        self.net.unicast( to_uid, self.net_channel, message_type, kwargs )
+        self.net.unicast_message( to_uid, self.net_channel, message_type, kwargs )
 
 
     def receive_catchup_request(self, from_uid, msg):
@@ -306,11 +323,11 @@ class KeyValueDB (object):
                 break
 
         self.unicast( from_uid, 'catchup_data',
-                      from_instance = header['last_known_instance'],
+                      from_instance = msg['last_known_instance'],
                       key_val_instance_list = l )
 
     
-    def receive_catchup_data(self, from_instance):
+    def receive_catchup_data(self, from_instance, msg):
         if self.last_instance != from_instance:
             # This is a reply to an old request. Ignore it.
             return
@@ -338,14 +355,14 @@ class KeyValueDB (object):
             self._catchup()
 
     
-    def receive_propose_value(self, from_uid, msg):
-        try:
-            if not self.allow_config_proposals and msg['key'] == _ZPAX_CONFIG_KEY:
-                raise Exception('Access Denied')
-            self.kv_node.proposeValue( msg['request_id'], [msg['key'], msg['value']] )
+    def receive_propose_value(self, from_uid, msg):        
+        if not self.allow_config_proposals and msg['key'] == _ZPAX_CONFIG_KEY:
+            self.unicast(from_uid, 'propose_reply', request_id=msg['request_id'], error='Access Denied')
+        else:
+            self.kv_node.set_proposal( msg['key'], msg['value'] )
             self.unicast(from_uid, 'propose_reply', request_id=msg['request_id'])
-        except node.ProposalFailed, e:
-            self.unicast(from_uid, 'propose_reply', request_id=msg['request_id'], error=str(e))
+
+            
 
             
     def receive_query_value(self, from_uid, msg):
