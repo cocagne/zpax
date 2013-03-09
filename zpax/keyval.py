@@ -7,6 +7,15 @@ applications. Due to the simplicity goal, the performance of this
 implementation is not stellar but should be sufficient for lightweight usage.
 '''
 
+# Potential future extensions:
+#
+#   * Buffered key=value assignments. Writes to different keys guarantee not to
+#     conflict.
+#
+#   * Multi-key commit: Check all key-sequence numbers in request match the current
+#     db state. If so, pass though to paxos for decision. If not, send nack.
+
+
 import os.path
 import sqlite3
 import json
@@ -105,9 +114,10 @@ class KeyValNode (multi.MultiPaxosHeartbeatNode):
     from entering the database in an out-of-order manner.
     '''
 
-    def __init__(self, kvdb, net_node, quorum_size):
+    def __init__(self, kvdb, net_node, channel_name, quorum_size):
         super(KeyValNode,self).__init__(net_node, quorum_size)
         self.kvdb = kvdb
+        self.net  = net_node
 
 
     def receive_heartbeat(self, from_uid, kw):
@@ -176,7 +186,7 @@ class KeyValueDB (object):
     catchup_retry_delay = 2.0
     catchup_num_items   = 2
     
-    def __init__(self, net_node, quorum_size,
+    def __init__(self, net_node, net_channel, quorum_size,
                  database_dir,
                  database_filename=None):
 
@@ -193,10 +203,11 @@ class KeyValueDB (object):
         self.catchup_retry = None
         self.active_instance = None
 
-        self.kv_node = KeyValNode(self, net_node, quorum_size)
+        self.kv_node = KeyValNode(self, net_node, net_channel + '.paxos', quorum_size)
         self.net     = net_node
 
-        self.net.message_handler.append(self)
+        self.net_channel = net_channel + '.kv'
+        self.net.message_handler.append(self.net_channel, self)
 
         if self.initialized:
             self._load_configuration()
@@ -276,14 +287,14 @@ class KeyValueDB (object):
             if self.kv_node.leader_uid is not None:
                 self.unicast( self.kv_node.leader_uid,
                               'catchup_request',
-                              last_known_instance=self.last_instance ) )
+                              last_known_instance=self.last_instance )
         
 
     #--------------------------------------------------------------------------
     # Messaging
     #           
     def unicast(self, to_uid, message_type, **kwargs):
-        self.net.unicast( to_uid, message_type, json.dumps(kwargs) )
+        self.net.unicast( to_uid, self.net_channel, message_type, kwargs )
 
 
     def receive_catchup_request(self, from_uid, msg):
@@ -331,7 +342,7 @@ class KeyValueDB (object):
         try:
             if not self.allow_config_proposals and msg['key'] == _ZPAX_CONFIG_KEY:
                 raise Exception('Access Denied')
-            self.kv_node.proposeValue( msg['request_id'], [msg['key'], msg['value']] ) )
+            self.kv_node.proposeValue( msg['request_id'], [msg['key'], msg['value']] )
             self.unicast(from_uid, 'propose_reply', request_id=msg['request_id'])
         except node.ProposalFailed, e:
             self.unicast(from_uid, 'propose_reply', request_id=msg['request_id'], error=str(e))

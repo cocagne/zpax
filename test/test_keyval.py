@@ -16,7 +16,7 @@ this_dir = pd(os.path.abspath(__file__))
 sys.path.append( pd(this_dir) )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
-from zpax import keyval, multi, tzmq
+from zpax import keyval, multi, tzmq, testhelper
 
 
 def delay(t):
@@ -25,46 +25,34 @@ def delay(t):
     return d
 
 
-class TestHBP (node.BasicHeartbeatProposer):
-    hb_period       = 0.05
-    liveness_window = 0.15
 
-    
-class TestKVN (keyval.KeyValNode):
-    hb_proposer_klass = TestHBP
-
-    
-class TestKV (keyval.KeyValueDB):
-    _node_klass = TestKVN
-
-
-class TestReq(tzmq.ZmqReqSocket):
+class TestReq (object):
     d = None
     last_val = None
-    
-    def propose(self, key, value):
-        self.linger=0
-        return self.jsend(type='propose_value', key=key, value=value)
 
-    def query(self, key):
-        return self.jsend(type='query_value', key=key)
-        
-    def jsend(self, **kwargs):
-        assert self.d is None
+    def __init__(self, channel='test_channel.kv', node_id='client'):
+        self.net = testhelper.NetworkNode(node_id)
+        self.net.add_message_handler(channel, self)
+        self.net.connect([])
+    
+    def propose(self, to_id, key, value):
         self.d = defer.Deferred()
-        self.send( json.dumps(kwargs) )
+        self.net.unicast(to_id, 'propose_value', key=key, value=value)
         return self.d
 
-    def messageReceived(self, parts):
-        #print 'MESSAGE RECEIVED', parts
-        
-        d = self.d
-        self.d = None
+    def query(self, to_id, key):
+        self.d = defer.Deferred()
+        self.net.unicast(to_id, 'query_value', key=key)
+        return self.d
 
-        if len(parts) != 1:
-            d.errback(Exception('Did not receive 1 message part in reply'))
-        else:
-            d.callback( json.loads(parts[0]) )
+    def receive_propose_reply(self, from_uid, msg):
+        print 'Propose Reply Received:', msg
+        self.d.callback(msg)
+
+    def receive_query_result(self, from_uid, msg):
+        print 'Query Result Received:', msg
+        self.d.callback(msg)
+        
 
 
 
@@ -81,6 +69,8 @@ class KeyValueDBTester(unittest.TestCase):
         self.dlost       = None
         self.clients     = list()
         self.all_nodes   = 'a b c'.split()
+
+        testhelper.setup()
 
         
     @property
@@ -111,17 +101,16 @@ class KeyValueDBTester(unittest.TestCase):
         # In ZeroMQ 2.1.11 there is a race condition for socket deletion
         # and recreation that can render sockets unusable. We insert
         # a short delay here to prevent the condition from occuring.
-        return delay(0.05)
+        #return delay(0.05)
 
 
-    def new_client(self, node_name=None):
+    def new_client(self):
         zreq = TestReq()
         self.clients.append(zreq)
-        zreq.connect('ipc:///tmp/ts_{}_kv_rep'.format(node_name))
         return zreq
             
 
-    def start(self,  node_names, chatty=False, hmac_key=None, value_key=None, caughtup=None):
+    def start(self,  node_names, caughtup=None):
 
         def gen_cb(x, func):
             def cb():
@@ -134,27 +123,24 @@ class KeyValueDBTester(unittest.TestCase):
             if not node_name in self.all_nodes or node_name in self.nodes:
                 continue
                         
-            n = TestKV(node_name, self.tdir, os.path.join(self.tdir, node_name + '.sqlite'))
+            n = keyval.KeyValueDB(testhelper.NetworkNode(node_name),
+                                  'test_channel',
+                                  2,
+                                  self.tdir, os.path.join(self.tdir, node_name + '.sqlite'))
 
             n.allow_config_proposals = True
 
-            if hmac_key:
-                n.kv_node.hmac_key = hmac_key
-
-            if value_key:
-                n.kv_node.value_key = value_key
-
             n.kv_node.onLeadershipAcquired = gen_cb(node_name, self._on_leader_acq)
             n.kv_node.onLeadershipLost     = gen_cb(node_name, self._on_leader_lost)
+
+            n.hb_period       = 0.05
+            n.liveness_window = 0.15
 
             n.name = node_name
 
             if caughtup:
                 n.onCaughtUp = caughtup
             
-            if chatty:
-                n.kv_node.chatty = True
-                
             self.nodes[node_name] = n
 
             if not n.isInitialized():
@@ -183,20 +169,20 @@ class KeyValueDBTester(unittest.TestCase):
             d.callback(node_id)
 
     @defer.inlineCallbacks
-    def set_key(self, client, key, value):
+    def set_key(self, client, to_id, key, value):
         
         v = None
         while v != value:
-            yield client.propose(key,value)
+            yield client.propose(to_id, key,value)
             yield delay(0.1)
-            r = yield client.query(key)
+            r = yield client.query(to_id, key)
             v = r['value']
             #print 'set_key', key, value, v, v != value
 
 
 
-    def get_key(self, client, key):
-        d = client.query(key)
+    def get_key(self, to_id, client, key):
+        d = client.query(to_id, key)
         d.addCallback( lambda r : r['value'] )
         return d
     
@@ -212,16 +198,16 @@ class KeyValueDBTester(unittest.TestCase):
         self.start('a b')
 
         d = defer.Deferred()
-        c = self.new_client('a')
+        c = self.new_client()
 
         yield self.dleader
         
-        yield c.propose('foo', 'bar')
+        yield c.propose('a', 'foo', 'bar')
 
         keyval = None
         while keyval != 'bar':
             yield delay(0.05)
-            r = yield c.query('foo')
+            r = yield c.query('a', 'foo')
             keyval = r['value']
 
 
