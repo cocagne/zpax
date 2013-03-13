@@ -105,11 +105,10 @@ class TransactionManager (object):
     tx_history_factory = TransactionHistory
 
     # all_node_ids = set() of node ids
-    def __init__(self, net_node, channel_name, node_uid,
-                 quorum_size, all_node_ids, threshold, durable):
-        self.net           = net_node
-        self.channel_name  = channel_name
-        self.node_uid      = node_uid
+    def __init__(self, net_channel, quorum_size,
+                 all_node_ids, threshold, durable):
+        self.net           = net_channel
+        self.node_uid      = net_channel.node_uid
         self.quorum_size   = quorum_size
         self.all_node_ids  = all_node_ids
         self.threshold     = threshold
@@ -117,7 +116,7 @@ class TransactionManager (object):
         self.transactions  = dict()       # uuid => Transaction instance
         self.results_cache = self.tx_history_factory()
 
-        self.net.add_message_handler( self.channel_name, self )
+        self.net.add_message_handler( self )
 
 
     def heartbeat(self, current_time, transaction_leader=False):
@@ -182,9 +181,8 @@ class TransactionManager (object):
         r = self.results_cache.lookup( tx_uuid )
         
         if r is not None:
-            self.net.unicast_message(from_uid, self.channel_name,
-                                     'transaction_result',
-                                     dict( tx_uuid=tx_uuid, result=r ))
+            self.net.unicast(from_uid, 'transaction_result',
+                             dict( tx_uuid=tx_uuid, result=r ))
             return
         
         tx = self.create_transaction( tx_uuid, msg )
@@ -343,17 +341,12 @@ class TransactionNode(paxos.practical.Node):
     def broadcast(self, message_type, **kwargs):
         kwargs.update( { 'tx_uuid' : self.tx.uuid,
                          'tx_node' : self.tx_node_id } )
-        self.tx.manager.net.broadcast_message( self.tx.channel_name,
-                                               message_type,
-                                               kwargs )
+        self.tx.manager.net.broadcast( message_type, kwargs )
 
     def unicast(self, to_uid, message_type, **kwargs):
         kwargs.update( { 'tx_uuid' : self.tx.uuid,
                          'tx_node' : self.tx_node_id } )
-        self.tx.manager.net.unicast_message( to_uid,
-                                             self.tx.channel_name,
-                                             message_type,
-                                             kwargs )
+        self.tx.manager.net.unicast( to_uid, message_type, kwargs )
                                            
     def send_prepare(self, proposal_id):
         self.broadcast( 'prepare', proposal_id = proposal_id )

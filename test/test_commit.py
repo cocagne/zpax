@@ -36,9 +36,7 @@ class TransactionTester (unittest.TestCase):
         for nid in self.all_nodes:
             self.zpax_nodes[nid] = ('foo','foo')
             
-            tm = TransactionManager( testhelper.NetworkNode(nid),    #network_node
-                                     'test_channel',                 #channel_name
-                                     nid,                            #node_uid,
+            tm = TransactionManager( testhelper.Channel('test_channel', testhelper.NetworkNode(nid)),    #network_channel
                                      2,                              #quorum_size,
                                      self.all_nodes,                 #all_node_ids,
                                      2,                              #threshold,

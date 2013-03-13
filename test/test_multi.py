@@ -17,7 +17,7 @@ sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
 from zpax import multi, testhelper
 
-from zpax.testhelper import gatherResults, trace_messages
+from zpax.testhelper import gatherResults, trace_messages, show_stacktrace
 
 
 def delay(t):
@@ -106,7 +106,8 @@ class MultiTesterBase(object):
         self.A.pax.acquire_leadership()
         yield self.A.dleader_acq
 
-        #@trace_messages
+    #@trace_messages
+    @show_stacktrace
     @defer.inlineCallbacks
     def test_leadership_recovery_on_failure(self):
         self.A.pax.acquire_leadership()
@@ -434,8 +435,7 @@ class HeartbeatTester(MultiTesterBase, unittest.TestCase):
         
         for uid in all_nodes:
 
-            self.nodes[uid] =  HBTestNode( testhelper.NetworkNode(uid),
-                                           'test_channel',
+            self.nodes[uid] =  HBTestNode( testhelper.Channel('test_channel', testhelper.NetworkNode(uid)),
                                            2,
                                            hb_period       = 0.01,
                                            liveness_window = 0.03 )

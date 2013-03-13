@@ -23,6 +23,15 @@ class Channel (object):
         self.net_node     = net_node
 
         
+    @property
+    def node_uid(self):
+        return self.net_node.node_uid
+
+    
+    def create_subchannel(self, sub_channel_name):
+        return Channel( self.channel_name + '.' + sub_channel_name, self.net_node )
+
+        
     def add_message_handler(self, handler):
         self.net_node.add_message_handler(self.channel_name, handler)
         

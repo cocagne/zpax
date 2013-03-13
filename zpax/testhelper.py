@@ -1,5 +1,7 @@
 from twisted.internet import defer, task, reactor
 
+from zpax import net
+
 TRACE = False
 
 nodes = dict() # uid => NetworkNode object
@@ -35,6 +37,18 @@ def trace_messages( fn ):
     return wrapit
 
 
+def show_stacktrace( fn ):
+    @defer.inlineCallbacks
+    def wrapit(self, *args, **kwargs):
+        try:
+            yield fn(self, *args, **kwargs)
+        except:
+            import traceback
+            traceback.print_exc()
+            raise
+    return wrapit
+
+
 
 def broadcast_message( src_uid, channel_name, message_type, *parts ):
     if len(parts) == 1 and isinstance(parts[0], (list, tuple)):
@@ -51,6 +65,21 @@ def unicast_message( src_uid, dst_uid, channel_name, message_type, *parts ):
         nodes[dst_uid].recv_message( src_uid, channel_name, message_type, parts )
 
 
+class Channel( net.Channel ):
+
+    
+    def get_link_up(self):
+        return self.net_node.link_up
+
+    def set_link_up(self, v):
+        self.net_node.link_up = v
+
+    link_up = property(get_link_up, set_link_up)
+
+    
+    def create_subchannel(self, sub_channel_name):
+        return Channel( self.channel_name + '.' + sub_channel_name, self.net_node )
+    
 
 class NetworkNode (object):
 
