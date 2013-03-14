@@ -130,8 +130,7 @@ class KeyValueDBTester(unittest.TestCase):
             if not node_name in self.all_nodes or node_name in self.nodes:
                 continue
                         
-            n = keyval.KeyValueDB(testhelper.NetworkNode(node_name),
-                                  'test_channel',
+            n = keyval.KeyValueDB(testhelper.Channel('test_channel', testhelper.NetworkNode(node_name)),
                                   2,
                                   self.tdir, os.path.join(self.tdir, node_name + '.sqlite'),
                                   hb_period = 0.05,
@@ -258,7 +257,7 @@ class KeyValueDBTester(unittest.TestCase):
         self.start('a b')
 
         d = defer.Deferred()
-        c = self.new_client('a')
+        c = self.new_client()
 
         yield self.dleader
         
@@ -275,7 +274,7 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield self.dleader
 
-        v = yield self.get_key(c, 'a', 'foo0')
+        v = yield self.get_key('c', c, 'foo0')
 
         self.assertEquals(v, 'bar')
 

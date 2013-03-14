@@ -114,11 +114,12 @@ class KeyValNode (multi.MultiPaxosHeartbeatNode):
     from entering the database in an out-of-order manner.
     '''
 
-    def __init__(self, kvdb, net_node, channel_name, quorum_size, **kwargs):
-        super(KeyValNode,self).__init__(net_node, channel_name, quorum_size, **kwargs)
-        self.kvdb = kvdb
-        self.net  = net_node
-        self.net.add_message_handler(channel_name, self)
+    def __init__(self, kvdb, net_channel, quorum_size, **kwargs):
+        super(KeyValNode,self).__init__(net_channel, quorum_size, **kwargs)
+        self.kvdb        = kvdb
+        self.kv_channel  = self.net.create_subchannel('paxos')
+        
+        self.kv_channel.add_message_handler(self)
 
 
     def receive_heartbeat(self, from_uid, kw):
@@ -195,7 +196,7 @@ class KeyValueDB (object):
     catchup_retry_delay = 2.0
     catchup_num_items   = 2
     
-    def __init__(self, net_node, net_channel, quorum_size,
+    def __init__(self, net_channel, quorum_size,
                  database_dir,
                  database_filename=None,
                  **kwargs):
@@ -213,11 +214,10 @@ class KeyValueDB (object):
         self.catchup_retry    = None
         self.active_instance  = None
 
-        self.kv_node  = KeyValNode(self, net_node, net_channel + '.paxos', quorum_size, **kwargs)
-        self.net      = net_node
+        self.kv_node  = KeyValNode(self, net_channel, quorum_size, **kwargs)
+        self.net      = net_channel.create_subchannel('kv')
 
-        self.net_channel = net_channel + '.kv'
-        self.net.add_message_handler(self.net_channel, self)
+        self.net.add_message_handler(self)
 
         if self.initialized:
             self._load_configuration()
@@ -311,7 +311,7 @@ class KeyValueDB (object):
     # Messaging
     #           
     def unicast(self, to_uid, message_type, **kwargs):
-        self.net.unicast_message( to_uid, self.net_channel, message_type, kwargs )
+        self.net.unicast( to_uid, message_type, kwargs )
 
 
     def receive_catchup_request(self, from_uid, msg):
