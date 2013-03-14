@@ -14,7 +14,8 @@ class IDurableStateStore(object):
 
     def get_state(self, data_id):
         '''
-        Returns the data associated with the id
+        Returns a Deferred to the data associated with the id. Returns None if
+        no state is associated with the data_id
         '''
 
     def flush(self):
@@ -72,7 +73,7 @@ class MemoryOnlyStateStore(object):
 
         
     def get_state(self, data_id):
-        return self.data[data_id].data
+        return defer.succeed(self.data[data_id].data if data_id in self.data else None)
 
     
     def flush(self):

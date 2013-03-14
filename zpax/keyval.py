@@ -114,12 +114,14 @@ class KeyValNode (multi.MultiPaxosHeartbeatNode):
     from entering the database in an out-of-order manner.
     '''
 
-    def __init__(self, kvdb, net_channel, quorum_size, **kwargs):
-        super(KeyValNode,self).__init__(net_channel, quorum_size, **kwargs)
+    def __init__(self, kvdb, net_channel, quorum_size, durable_data_id, durable_data_store, **kwargs):
+        super(KeyValNode,self).__init__(net_channel, quorum_size, durable_data_id, durable_data_store, **kwargs)
         self.kvdb        = kvdb
         self.kv_channel  = self.net.create_subchannel('paxos')
         
         self.kv_channel.add_message_handler(self)
+
+        self.initialize()
 
 
     def receive_heartbeat(self, from_uid, kw):
@@ -196,7 +198,7 @@ class KeyValueDB (object):
     catchup_retry_delay = 2.0
     catchup_num_items   = 2
     
-    def __init__(self, net_channel, quorum_size,
+    def __init__(self, net_channel, quorum_size, durable_data_id, durable_data_store,
                  database_dir,
                  database_filename=None,
                  **kwargs):
@@ -214,7 +216,8 @@ class KeyValueDB (object):
         self.catchup_retry    = None
         self.active_instance  = None
 
-        self.kv_node  = KeyValNode(self, net_channel, quorum_size, **kwargs)
+        self.kv_node  = KeyValNode(self, net_channel, quorum_size, durable_data_id,
+                                   durable_data_store, **kwargs)
         self.net      = net_channel.create_subchannel('kv')
 
         self.net.add_message_handler(self)
@@ -253,7 +256,7 @@ class KeyValueDB (object):
     def initialized(self):
         return self.db.get_value(_ZPAX_CONFIG_KEY) is not None
 
-    
+
     def initialize(self, config_str):
         if self.initialized:
             raise Exception('Node already initialized')

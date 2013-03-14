@@ -15,7 +15,7 @@ sys.path.append( pd(this_dir) )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
 
-from zpax import multi, testhelper
+from zpax import multi, testhelper, durable
 
 from zpax.testhelper import gatherResults, trace_messages, show_stacktrace
 
@@ -230,10 +230,11 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
 
-        #@trace_messages
+    #@trace_messages
     @defer.inlineCallbacks
     def test_proposal_advocate_retry_with_crash_recovery(self):
         self.A.pax.acquire_leadership()
+        
         yield self.A.dleader_acq
 
         self.B.net.link_up = False
@@ -242,19 +243,18 @@ class MultiTesterBase(object):
         
         self.B.set_proposal( 'reqid', 'foobar' )
 
-        yield delay( 0.03 )
-        
-        s = self.save_node( 'B' )
+        self.B.persist()
 
-        self.recover_node( s, False )
+        yield delay( 0.03 )
 
         self.assertTrue( not self.A.dresolution.called )
+        
+        self.fail_node( 'B' )
+        yield self.recover_node( 'B' )
 
         d = gatherResults( [self.A.dresolution,
                             self.B.dresolution,
                             self.C.dresolution] )
-
-        self.B.net.link_up = True
 
         r = yield d
 
@@ -333,6 +333,7 @@ class MultiTesterBase(object):
     @defer.inlineCallbacks
     def test_multiple_instances_with_crash_recovery(self):
         self.A.pax.acquire_leadership()
+        
         yield self.A.dleader_acq
 
         self.assertEquals( self.A.instance, 1 )
@@ -351,20 +352,40 @@ class MultiTesterBase(object):
                               ((1, 'A'), ('reqid', 'foobar'))] )
 
 
-        self.recover_node( self.save_node('A'), False )
-        self.recover_node( self.save_node('B'), False )
-        self.recover_node( self.save_node('C'), False )
+        self.assertEquals( self.A.instance, 2 )
+        
+        for uid in 'ABC':
+            self.fail_and_recover(uid, False)
 
         self.A.net.link_up = True
         self.B.net.link_up = True
         self.C.net.link_up = True
-        
-        self.assertEquals( self.A.instance, 2 )
+
+        #------------------------------------------------
+        # Recovery will return to the previous instance. We'll
+        # need to re-resolve the same result.
+        #
+        self.assertEquals( self.A.instance, 1 )
 
         d = gatherResults( [self.A.dresolution,
                             self.B.dresolution,
                             self.C.dresolution] )
                             
+
+        r = yield d
+
+        self.assertEquals(r, [((1, 'A'), ('reqid', 'foobar')),
+                              ((1, 'A'), ('reqid', 'foobar')),
+                              ((1, 'A'), ('reqid', 'foobar'))] )
+
+        #------------------------------------------------
+        # Back to instance 2
+        #
+        self.assertEquals( self.A.instance, 2 )
+
+        d = gatherResults( [self.A.dresolution,
+                            self.B.dresolution,
+                            self.C.dresolution] )
         
         self.A.set_proposal( 'reqid', 'baz' )
 
@@ -427,9 +448,14 @@ class MultiTesterBase(object):
 
 class HeartbeatTester(MultiTesterBase, unittest.TestCase):
 
+    durable_key = 'durable_id_{0}'
+
+    @defer.inlineCallbacks
     def _setup(self):
 
         testhelper.setup()
+
+        self.dd_store = durable.MemoryOnlyStateStore()
 
         self.zpax_nodes = dict()
         
@@ -437,8 +463,13 @@ class HeartbeatTester(MultiTesterBase, unittest.TestCase):
 
             self.nodes[uid] =  HBTestNode( testhelper.Channel('test_channel', testhelper.NetworkNode(uid)),
                                            2,
+                                           self.durable_key.format(uid),
+                                           self.dd_store,
                                            hb_period       = 0.01,
                                            liveness_window = 0.03 )
+
+            yield self.nodes[uid].initialize()
+            
             self.zpax_nodes[uid] = ('foo','foo')
 
         for uid in all_nodes:
@@ -447,23 +478,34 @@ class HeartbeatTester(MultiTesterBase, unittest.TestCase):
         self.nodes['A'].pax._tlast_hb   = 0
         self.nodes['A'].pax._tlast_prep = 0
 
+
+    def fail_node(self, node_uid):
+        self.nodes[ node_uid ].shutdown()
+        del self.nodes[ node_uid ]
+
+
+    @defer.inlineCallbacks
+    def recover_node(self, node_uid, link_up = True):
+        n = HBTestNode( testhelper.Channel('test_channel', testhelper.NetworkNode(node_uid)),
+                        2,
+                        self.durable_key.format(node_uid),
+                        self.dd_store,
+                        hb_period       = 0.01,
+                        liveness_window = 0.03 )
         
-    def save_node(self, node_uid):
-        pkl = pickle.dumps(self.nodes[node_uid], pickle.HIGHEST_PROTOCOL)
-        self.nodes[node_uid].shutdown()
-        return pkl
+        self.nodes[node_uid] = n
 
-    
-    def recover_node(self, pkl_string, link_up = True):
-        n  = pickle.loads(pkl_string)
+        n.advocate.retry_delay = 0.01
 
-        nn = testhelper.NetworkNode(n.node_uid)
+        yield n.initialize()
+            
+        n.net.connect( self.zpax_nodes )
+        n.net.link_up = link_up
 
-        nn.connect( self.zpax_nodes )
+        setattr(self, node_uid, n)
 
-        nn.link_up = link_up
         
-        n.recover( nn )
-
-        self.nodes[ n.node_uid ] = n
-        setattr(self, n.node_uid, n)
+    @defer.inlineCallbacks
+    def fail_and_recover(self, node_uid, link_up = True):
+        self.fail_node( node_uid )
+        yield self.recover_node( node_uid, link_up )

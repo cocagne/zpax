@@ -121,22 +121,66 @@ class ProposalAdvocate (object):
         
 class MultiPaxosNode(object):
 
-    def __init__(self, net_channel, quorum_size):
+    def __init__(self, net_channel, quorum_size, durable_data_id, durable_data_store):
+        '''
+        net_channel        - net.Channel instance
+        quorum_size        - Paxos quorum size
+        durable_data_id    - Unique ID for use with the durable_data_store
+        durable_data_store - Implementer of durable.IDurableDataStore
+        '''
         self.net         = net_channel
         self.node_uid    = net_channel.node_uid
         self.quorum_size = quorum_size
+        self.dd_store    = durable_data_store
+        self.dd_id       = durable_data_id
         self.instance    = 0
         self.leader_uid  = None
         self.pax         = None
         self.pax_ignore  = False # True if all Paxos messages should be ignored
+        self.persisting  = False
         self.advocate    = ProposalAdvocate(self)
 
         self.instance_exceptions  = set() # message types that should be processed
                                           # even if the instance number is not current
 
         self.net.add_message_handler(self)
+        
 
-        self.next_instance()
+    @defer.inlineCallbacks
+    def initialize(self):
+        '''
+        Initilizes the node from the durable state saved for a pre-existing,
+        multi-paxos session or creates a new session if no durable state is found.
+        '''
+        state = yield self.dd_store.get_state(self.dd_id)
+
+        if state is None:
+            self.next_instance()
+        else:
+            self.instance = state['instance']
+            
+            yield self._recover_from_persistent_state( state )
+            
+            self.advocate.set_proposal( self.instance, state['request_id'],
+                                        state['proposal'] )
+
+
+    def _recover_from_persistent_state(self, state):
+        '''
+        Abstract method used by subclasses to recover the multi-paxos session from
+        durable state. The 'state' argument is a dictionary containing the Acceptor's
+        promised_id, accepted_id, and accepted_value attributes. The subclass may
+        add additional state to this dictionary by overriding the
+        _get_additional_persistent_state method.
+        '''
+
+    def _get_additional_persistent_state(self):
+        '''
+        Called when multi-paxos state is being persisted to disk prior to sending
+        a promise/accepted message. The return value is a dictionary of key-value
+        pairs to persist
+        '''
+        return {}
         
         
     def shutdown(self):
@@ -155,21 +199,32 @@ class MultiPaxosNode(object):
         self.pax.change_quorum_size( quorum_size )
 
 
-    def recover(self, net_channel):
-        '''
-        Called when recovering from durable state. Recovery of the paxos node instance
-        is left to the subclass.
-        '''
-        assert self.node_uid == net_node.node_uid, "Node UID mismatch"
-        self.net = net_channel
-        self.net.add_message_handler(self)
-        self.advocate.recover(self)
-
-
     def _new_paxos_node(self):
         '''
         Abstract function that returns a new paxos.node.Node instance
         '''
+
+    @defer.inlineCallbacks
+    def persist(self):
+        if not self.persisting:
+            self.persisting = True
+
+            state = dict( instance       = self.instance,
+                          proposal       = self.advocate.proposal,
+                          request_id     = self.advocate.request_id,
+                          promised_id    = self.pax.promised_id,
+                          accepted_id    = self.pax.accepted_id,
+                          accepted_value = self.pax.accepted_value )
+
+            state.update( self._get_additional_persistent_state() )
+            
+            yield self.dd_store.set_state( self.dd_id, state )
+            
+            self.persisting = False
+            
+            self.pax.persisted()
+            
+
 
 
     def next_instance(self, set_instance_to=None):
@@ -252,9 +307,8 @@ class MultiPaxosNode(object):
     def receive_prepare(self, from_uid, msg):
         self.pax.recv_prepare( from_uid, ProposalID(*msg['proposal_id']) )
 
-        # TODO: Actual durability implementation
         if self.pax.persistance_required:
-            self.pax.persisted()
+            self.persist()
         
 
     def send_promise(self, to_uid, proposal_id, previous_id, accepted_value):
@@ -290,7 +344,7 @@ class MultiPaxosNode(object):
 
         # TODO: Actual durability implementation
         if self.pax.persistance_required:
-            self.pax.persisted()
+            self.persist()
 
         
     def send_accept_nack(self, to_uid, proposal_id, promised_id):
@@ -340,8 +394,6 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
             
         super(MultiPaxosHeartbeatNode, self).__init__(*args, **kwargs)
 
-        self._start_tasks()
-
         self.instance_exceptions.add('heartbeat')
 
 
@@ -355,6 +407,12 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         super(MultiPaxosHeartbeatNode, self).shutdown()
 
 
+    @defer.inlineCallbacks
+    def initialize(self):
+        yield super(MultiPaxosHeartbeatNode,self).initialize()
+        self._start_tasks()
+
+
     def __getstate__(self):
         d = super(MultiPaxosHeartbeatNode, self).__getstate__()
         d.pop('hb_poll_task',      None)
@@ -362,18 +420,25 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         return d
 
 
-    def recover(self, *args):
-        self.pax.recover(self)
-        super(MultiPaxosHeartbeatNode, self).recover(*args)
+    def _recover_from_persistent_state(self, state):
+        self.pax = self._new_paxos_node()
+        
+        self.pax.recover( state['promised_id'],
+                          state['accepted_id'],
+                          state['accepted_value'] )
+        
         self._start_tasks()
+        
+        return defer.succeed(None)
         
 
 
     def _start_tasks(self):
-        self.hb_poll_task      = task.LoopingCall( lambda : self.pax.poll_liveness()  )
-        self.leader_pulse_task = task.LoopingCall( lambda : self.pax.pulse()          )
+        if self.hb_poll_task is None:
+            self.hb_poll_task      = task.LoopingCall( lambda : self.pax.poll_liveness()  )
+            self.leader_pulse_task = task.LoopingCall( lambda : self.pax.pulse()          )
 
-        self.hb_poll_task.start( self.liveness_window )
+            self.hb_poll_task.start( self.liveness_window )
 
         
     def _new_paxos_node(self):
