@@ -97,7 +97,7 @@ class SqliteDB (object):
     
     def iter_updates(self, start_instance, end_instance=2**32):
         c = self._con.cursor()
-        c.execute('SELECT key,value,instance FROM kv WHERE instance>? AND instance<?  ORDER BY instance',
+        c.execute('SELECT key,value,instance FROM kv WHERE instance>=? AND instance<?  ORDER BY instance',
                   (start_instance, end_instance))
         return c
 
@@ -115,15 +115,20 @@ class KeyValNode (multi.MultiPaxosHeartbeatNode):
     '''
 
     def __init__(self, kvdb, net_channel, quorum_size, durable_data_id, durable_data_store, **kwargs):
-        super(KeyValNode,self).__init__(net_channel, quorum_size, durable_data_id, durable_data_store, **kwargs)
-        self.kvdb        = kvdb
-        self.kv_channel  = self.net.create_subchannel('paxos')
-        
-        self.kv_channel.add_message_handler(self)
+        super(KeyValNode,self).__init__( net_channel.create_subchannel('paxos'), quorum_size,
+                                         durable_data_id, durable_data_store, **kwargs)
+        self.kvdb = kvdb
 
         self.initialize()
 
 
+    def receive_prepare(self, from_uid, msg):
+        if msg['instance'] > self.instance:
+            self.kvdb.catchup(msg['instance'])
+            
+        super(KeyValNode,self).receive_prepare(from_uid, msg)
+
+        
     def receive_heartbeat(self, from_uid, kw):
 
         super(KeyValNode,self).receive_heartbeat(from_uid, kw)
@@ -135,14 +140,13 @@ class KeyValNode (multi.MultiPaxosHeartbeatNode):
         
 
     def on_resolution(self, proposal_id, tpl):
-        # This method is only called when our database is current
-        assert self.instance == self.kvdb.last_instance + 1
-
         key, value = tpl
-
-        self.kvdb.on_paxos_resolution( key, value, self.instance )
+        
+        if self.instance == self.kvdb.last_instance + 1:
+            self.kvdb.on_paxos_resolution( key, value, self.instance )
 
         super(KeyValNode,self).on_resolution(proposal_id, value)
+        
 
         
     def on_leadership_acquired(self):
@@ -292,11 +296,15 @@ class KeyValueDB (object):
         self.active_instance = active_instance
         
         if self.catching_up:
-            return 
+            return
 
         self.catching_up = True
 
-        self._catchup()
+        try:
+            self._catchup()
+        except:
+            import traceback
+            traceback.print_exc()
         
 
     def _catchup(self):
@@ -305,9 +313,12 @@ class KeyValueDB (object):
                                                    self._catchup)
 
             if self.kv_node.leader_uid is not None:
-                self.unicast( self.kv_node.leader_uid,
-                              'catchup_request',
-                              last_known_instance=self.last_instance )
+                self.net.unicast( self.kv_node.leader_uid,
+                                  'catchup_request',
+                                  dict(last_known_instance=self.last_instance) )
+            else:
+                self.net.broadcast( 'catchup_request',
+                                    dict(last_known_instance=self.last_instance) )
         
 
     #--------------------------------------------------------------------------
@@ -330,8 +341,8 @@ class KeyValueDB (object):
                       key_val_instance_list = l )
 
     
-    def receive_catchup_data(self, from_instance, msg):
-        if self.last_instance != from_instance:
+    def receive_catchup_data(self, from_uid, msg):        
+        if self.last_instance != msg['from_instance']:
             # This is a reply to an old request. Ignore it.
             return
             
@@ -352,7 +363,9 @@ class KeyValueDB (object):
                 
         self.last_instance = self.db.get_last_instance()
         
-        self.catching_up = self.active_instance != self.last_instance
+        self.kv_node.next_instance( self.last_instance + 1 )
+        
+        self.catching_up = self.active_instance != self.last_instance + 1
 
         if self.catching_up:
             self._catchup()

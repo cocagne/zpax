@@ -18,7 +18,7 @@ sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
 from zpax import keyval, multi, tzmq, testhelper, durable
 
-from zpax.testhelper import trace_messages
+from zpax.testhelper import trace_messages, show_stacktrace
 
 
 def delay(t):
@@ -188,7 +188,7 @@ class KeyValueDBTester(unittest.TestCase):
         v = None
         while v != value:
             yield client.propose(to_id, key,value)
-            yield delay(0.1)
+            yield delay(0.01)
             r = yield client.query(to_id, key)
             v = r['value']
             #print 'set_key', key, value, v, v != value
@@ -265,9 +265,11 @@ class KeyValueDBTester(unittest.TestCase):
         yield self.set_key(c, 'a', 'foo8', 'baz')
         yield self.set_key(c, 'a', 'foo9', 'baz')
 
-    @trace_messages
+
+    @show_stacktrace
+    #    @trace_messages
     @defer.inlineCallbacks
-    def xtest_shutdown_and_restart(self):
+    def test_shutdown_and_restart(self):
         self.start('a b')
 
         d = defer.Deferred()
@@ -286,27 +288,23 @@ class KeyValueDBTester(unittest.TestCase):
 
         self.start('a b')
 
-        print 'Waiting for second leader'
         yield self.dleader
 
-        print '*'*80
-        print 'getting key'
-        v = yield self.get_key('c', c, 'foo0')
+        v = yield self.get_key('a', c, 'foo0')
 
         self.assertEquals(v, 'bar')
 
-        print 'Setting key again'
         yield self.set_key(c, 'a', 'foo1', 'baz')
 
-        print 'Done!'
 
 
+    #@trace_messages
     @defer.inlineCallbacks
-    def xtest_shutdown_and_restart_with_outstanding_proposal(self):
+    def test_shutdown_and_restart_with_outstanding_proposal(self):
         self.start('a b')
 
         d = defer.Deferred()
-        c = self.new_client('a')
+        c = self.new_client()
 
         yield self.dleader
         
@@ -314,23 +312,23 @@ class KeyValueDBTester(unittest.TestCase):
 
         self.stop('b')
 
-        yield c.propose('foo1', 'bar')
+        yield c.propose('a', 'foo1', 'bar')
 
-        self.assertTrue( self.nodes['a'].kv_node.mpax.node.proposer.value is not None )
+        self.assertTrue( self.nodes['a'].kv_node.pax.proposed_value is not None )
 
         self.stop('a')
 
         yield delay(0.05)
 
         self.dleader = defer.Deferred()
-
+        
         self.start('a b')
 
         yield self.dleader
-
+        
         v = None
         while v != 'bar':
-            v = yield self.get_key(c, 'a', 'foo1')
+            v = yield self.get_key('a', c, 'foo1')
             yield delay(0.01)
 
         self.assertEquals(v, 'bar')
@@ -495,14 +493,14 @@ class SqliteDBTest(unittest.TestCase):
     def test_iter_updates_middle(self):
         for x in range(0,10):
             self.db.update_key(str(x), str(x), x)
-        l = [ x for x in self.db.iter_updates(1,5) ]
-        self.assertEquals(l, [(str(x),str(x),x) for x in range(2,5)])
+        l = [ x for x in self.db.iter_updates(2,6) ]
+        self.assertEquals(l, [(str(x),str(x),x) for x in range(2,6)])
 
     def test_iter_updates_ends(self):
         for x in range(0,10):
             self.db.update_key(str(x), str(x), x)
         l = [ x for x in self.db.iter_updates(0,10) ]
-        self.assertEquals(l, [(str(x),str(x),x) for x in range(1,10)])
+        self.assertEquals(l, [(str(x),str(x),x) for x in range(0,10)])
 
     def test_iter_updates_random_shuffle(self):
         rng = range(0,100)
@@ -510,5 +508,5 @@ class SqliteDBTest(unittest.TestCase):
         for x in rng:
             self.db.update_key(str(x), str(x), x)
         l = [ x for x in self.db.iter_updates(0,100) ]
-        self.assertEquals(l, [(str(x),str(x),x) for x in range(1,100)])
+        self.assertEquals(l, [(str(x),str(x),x) for x in range(0,100)])
         
