@@ -156,7 +156,7 @@ class KeyValueDBTester(unittest.TestCase):
             n.name = node_name
 
             if caughtup:
-                n.onCaughtUp = caughtup
+                n.on_caughtup = caughtup
             
             self.nodes[node_name] = n
 
@@ -337,41 +337,9 @@ class KeyValueDBTester(unittest.TestCase):
         self.assertEquals(v, 'bar')
 
             
-
-    @defer.inlineCallbacks
-    def xtest_zmq_req_down_rep_node(self):
-        #self.all_nodes.append('d')
-        self.start('a  b')
-
-        d = defer.Deferred()
-        c = self.new_client('a')
-
-        yield self.dleader
-
-        yield self.set_key(c, 'a', 'foo', 'bar')
-        
-        # Add a node to config
-        self.all_nodes.append('d')
-        
-        yield self.set_key(c, 'a', key_value._ZPAX_CONFIG_KEY, self.json_config)
-        
-        # Quorum is now 3. No changes can be made until 3 functioning nodes
-        # are up. Start the newly added node to reach a total of three then
-        # set a key
-        dcaughtup = defer.Deferred()
-        self.start('d', caughtup = lambda : dcaughtup.callback(None))
-        self.nodes['d'].chatty = True
-
-        yield dcaughtup
-
-        print 'Trying to set key with quorum 3'
-        yield self.set_key(c, 'a', 'test_key', 'foo')
-
-        print 'Done!!!'
-
         
     @defer.inlineCallbacks
-    def xtest_dynamic_add_node(self, chatty=False):
+    def test_dynamic_add_node(self, chatty=False):
 
         self.start('a c')
 
@@ -386,6 +354,8 @@ class KeyValueDBTester(unittest.TestCase):
         self.all_nodes.append('d')
 
         #print '*'*30
+
+        self.assertEquals(self.nodes['a'].kv_node.quorum_size, 2)
         
         yield self.set_key(c, 'a', key_value._ZPAX_CONFIG_KEY, self.json_config)
 
@@ -393,17 +363,14 @@ class KeyValueDBTester(unittest.TestCase):
         # are up. Start the newly added node to reach a total of three then
         # set a key
 
-        #print '*'*30
+
+        self.assertEquals(self.nodes['a'].kv_node.quorum_size, 3)
         
         dcaughtup = defer.Deferred()
 
         self.start('d', caughtup = lambda : dcaughtup.callback(None))
 
         yield dcaughtup
-
-        #yield delay(1)
-
-        #print '*'*30
 
         # Trying to set key with quorum 3
         yield self.set_key(c, 'a', 'test_key', 'foo')
@@ -412,16 +379,13 @@ class KeyValueDBTester(unittest.TestCase):
         
 
     @defer.inlineCallbacks
-    def xtest_dynamic_remove_node(self):
+    def test_dynamic_remove_node(self):
+        
         c = yield self.test_dynamic_add_node()
 
-        #yield self.set_key(c, 'a', 'test_key2', 'foo')
-        #print 'Node added', self.json_config
-        self.all_nodes.remove('c')
-        #print '*********'
-        #print self.json_config
+        self.assertEquals(self.nodes['a'].kv_node.quorum_size, 3)
 
-        #print  'Setting removed config'
+        self.all_nodes.remove('c')
 
         yield self.set_key(c, 'a', 'test_key3', 'foo')
         
@@ -429,23 +393,26 @@ class KeyValueDBTester(unittest.TestCase):
 
         self.stop('c')
 
-        #print 'Trying with quorum 2'
-        # Trying to set key with quorum 2
+        self.assertEquals(self.nodes['a'].kv_node.quorum_size, 2)
+        
         yield self.set_key(c, 'a', 'test_remove', 'foo')
 
-        #print 'REMOVE COMPLETE'
+
         
 
     @defer.inlineCallbacks
-    def xtest_node_recovery(self):
-        self.start('a b')
+    def test_node_recovery(self):
+        self.start('a b c')
 
         d = defer.Deferred()
-        c = self.new_client('a')
+        c = self.new_client()
 
         yield self.dleader
 
         yield self.set_key(c, 'a', 'foo', 'bar')
+
+        self.stop('c')
+    
         yield self.set_key(c, 'a', 'baz', 'bish')
         yield self.set_key(c, 'a', 'william', 'wallace')
 
@@ -455,9 +422,9 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield dcaughtup
 
-        c2 = self.new_client('c')
+        c2 = self.new_client()
 
-        r = yield c2.query('william')
+        r = yield c2.query('c', 'william')
         self.assertEquals(r['value'], 'wallace')
             
 

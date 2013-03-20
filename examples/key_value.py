@@ -250,7 +250,6 @@ class KeyValueDB (object):
 
         if not self.net.node_uid in all_nodes:
             # We've been removed from the inner circle
-            print 'This node has been removed from the Paxos group'
             self.shutdown()
 
         self.net.connect( zpax_nodes )
@@ -289,6 +288,9 @@ class KeyValueDB (object):
         pass
 
     def on_leadership_lost(self):
+        pass
+
+    def on_caughtup(self):
         pass
         
 
@@ -369,6 +371,8 @@ class KeyValueDB (object):
 
         if self.catching_up:
             self._catchup()
+        else:
+            self.on_caughtup()
 
     
     def receive_propose_value(self, from_uid, msg):        
