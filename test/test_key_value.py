@@ -14,11 +14,14 @@ pd = os.path.dirname
 this_dir = pd(os.path.abspath(__file__))
 
 sys.path.append( pd(this_dir) )
+sys.path.append( os.path.join(pd(this_dir), 'examples') )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
-from zpax import keyval, multi, tzmq, testhelper, durable
+from zpax import multi, tzmq, testhelper, durable
 
 from zpax.testhelper import trace_messages, show_stacktrace
+
+import key_value
 
 
 def delay(t):
@@ -134,7 +137,7 @@ class KeyValueDBTester(unittest.TestCase):
             if not node_name in self.all_nodes or node_name in self.nodes:
                 continue
 
-            n = keyval.KeyValueDB(testhelper.Channel('test_channel', testhelper.NetworkNode(node_name)),
+            n = key_value.KeyValueDB(testhelper.Channel('test_channel', testhelper.NetworkNode(node_name)),
                                   2,
                                   self.durable_key.format(node_name),
                                   self.dd_store,
@@ -350,7 +353,7 @@ class KeyValueDBTester(unittest.TestCase):
         # Add a node to config
         self.all_nodes.append('d')
         
-        yield self.set_key(c, 'a', keyval._ZPAX_CONFIG_KEY, self.json_config)
+        yield self.set_key(c, 'a', key_value._ZPAX_CONFIG_KEY, self.json_config)
         
         # Quorum is now 3. No changes can be made until 3 functioning nodes
         # are up. Start the newly added node to reach a total of three then
@@ -384,7 +387,7 @@ class KeyValueDBTester(unittest.TestCase):
 
         #print '*'*30
         
-        yield self.set_key(c, 'a', keyval._ZPAX_CONFIG_KEY, self.json_config)
+        yield self.set_key(c, 'a', key_value._ZPAX_CONFIG_KEY, self.json_config)
 
         # Quorum is now 3. No changes can be made until 3 functioning nodes
         # are up. Start the newly added node to reach a total of three then
@@ -422,7 +425,7 @@ class KeyValueDBTester(unittest.TestCase):
 
         yield self.set_key(c, 'a', 'test_key3', 'foo')
         
-        yield self.set_key(c, 'a', keyval._ZPAX_CONFIG_KEY, self.json_config)
+        yield self.set_key(c, 'a', key_value._ZPAX_CONFIG_KEY, self.json_config)
 
         self.stop('c')
 
@@ -465,7 +468,7 @@ class KeyValueDBTester(unittest.TestCase):
 class SqliteDBTest(unittest.TestCase):
 
     def setUp(self):
-        self.db = keyval.SqliteDB(':memory:')
+        self.db = key_value.SqliteDB(':memory:')
 
     def test_update_missing_value(self):
         self.assertTrue(self.db.get_value('foo') is None)

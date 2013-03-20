@@ -167,12 +167,13 @@ class MultiPaxosNode(object):
 
     def _recover_from_persistent_state(self, state):
         '''
-        Abstract method used by subclasses to recover the multi-paxos session from
-        durable state. The 'state' argument is a dictionary containing the Acceptor's
-        promised_id, accepted_id, and accepted_value attributes. The subclass may
-        add additional state to this dictionary by overriding the
-        _get_additional_persistent_state method.
+        This method may be used by subclasses to recover the multi-paxos
+        session from durable state. The 'state' argument is a dictionary
+        containing the Acceptor's promised_id, accepted_id, and accepted_value
+        attributes. The subclass may add additional state to this dictionary by
+        overriding the _get_additional_persistent_state method.
         '''
+    
 
     def _get_additional_persistent_state(self):
         '''
@@ -452,6 +453,30 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         self.is_leader = True
         self.leader_pulse_task.start( self.hb_period )
         super(MultiPaxosHeartbeatNode, self).on_leadership_acquired()
+
+
+    def receive_prepare(self, from_uid, msg):
+        '''
+        Waiting purely for a heartbeat message for detecting the behind-in-sequence
+        condition is insufficient so prepare messages must be checked as well. The
+        condition being protected against is the following:
+        
+           * A threshold number of nodes resolve on a proposal
+           * One of the nodes crashes before learning of the resolution
+           * The rest of the nodes crash
+           * All nodes recover
+           * At this point, leadership cannot be obtained since the first node that
+             crashed believes it is still working with paxos instance N whereas the
+             other nodes believe they are working on paxos instance N+1. No quorum
+             can be achieved.
+
+        We prevent this condition by examinging prepare messages for instances
+        greater than our own and use the catchup mechanism to get back in sync
+        with our peers.
+        '''
+        if msg['instance'] > self.instance:
+            self.behind_in_sequence( msg['instance'] )
+        super(MultiPaxosHeartbeatNode, self).receive_prepare(from_uid, msg)
 
 
     #------------------------------------------------------------
