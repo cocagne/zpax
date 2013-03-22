@@ -13,7 +13,7 @@ sys.path.append( pd(this_dir) )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
 
-from zpax import tzmq
+from zpax.network import zed
 
 from twisted.internet import reactor, defer
 from twisted.trial import unittest
@@ -29,8 +29,8 @@ class PS (object):
 
     def __init__(self, name, pub_addr, sub_addrs):
         self.name = name
-        self.pub  = tzmq.ZmqPubSocket()
-        self.sub  = tzmq.ZmqSubSocket()
+        self.pub  = zed.ZmqPubSocket()
+        self.sub  = zed.ZmqSubSocket()
 
         self.pub.bind( pub_addr )
         for a in sub_addrs:

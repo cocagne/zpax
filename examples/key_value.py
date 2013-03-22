@@ -20,7 +20,7 @@ import os.path
 import sqlite3
 import json
 
-from zpax import tzmq, multi
+from zpax import multi
 
 from twisted.internet import defer, task, reactor
 

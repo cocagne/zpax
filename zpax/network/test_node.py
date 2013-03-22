@@ -1,6 +1,6 @@
 from twisted.internet import defer, task, reactor
 
-from zpax import net
+from zpax.network import channel
 
 TRACE = False
 
@@ -65,7 +65,7 @@ def unicast_message( src_uid, dst_uid, channel_name, message_type, *parts ):
         nodes[dst_uid].recv_message( src_uid, channel_name, message_type, parts )
 
 
-class Channel( net.Channel ):
+class Channel( channel.Channel ):
 
     
     def get_link_up(self):

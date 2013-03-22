@@ -13,7 +13,7 @@ this_dir = pd(os.path.abspath(__file__))
 sys.path.append( pd(this_dir) )
 
 
-from zpax import net, testhelper
+from zpax.network import zmq_node, test_node
 
 
 def delay(t):
@@ -243,9 +243,9 @@ class NetworkNodeTesterBase(object):
 
 
 
-class ZeroMQNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
+class ZeroMQNodeTester(NetworkNodeTesterBase, unittest.TestCase):
 
-    NodeKlass  = net.NetworkNode
+    NodeKlass  = zmq_node.NetworkNode
     need_delay = True
 
     def _teardown(self):
@@ -256,9 +256,9 @@ class ZeroMQNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
     
     
 
-class TestHelperNetworkNodeTester(NetworkNodeTesterBase, unittest.TestCase):
+class TestNodeTester(NetworkNodeTesterBase, unittest.TestCase):
     
-    NodeKlass      = testhelper.NetworkNode
+    NodeKlass      = test_node.NetworkNode
 
     def _pre_setup(self):
-        testhelper.setup()
+        test_node.setup()

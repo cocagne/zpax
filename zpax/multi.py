@@ -6,8 +6,6 @@ from twisted.internet import defer, task, reactor
 import paxos.functional
 from paxos.functional import ProposalID
 
-from zpax import tzmq
-
 
 class ProposalFailed(Exception):
     pass

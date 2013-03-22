@@ -15,28 +15,29 @@ sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 from twisted.internet import reactor, defer
 from twisted.trial import unittest
 
-from zpax import testhelper, durable
+from zpax import durable
+
+from zpax.network import test_node
+from zpax.network.test_node import gatherResults, trace_messages
 
 from zpax.commit import TransactionManager
-
-from zpax.testhelper import gatherResults, trace_messages
 
 
 class TransactionTester (unittest.TestCase):
 
     def setUp(self):
-        testhelper.setup()
+        test_node.setup()
 
         self.all_nodes = set(['A', 'B', 'C'])
         self.tms       = dict()               # Node ID => TransactionManager
 
         self.zpax_nodes = dict() # dict of node_id => (zmq_rtr_addr, zmq_pub_addr)
-                                 # we'll fake it for the testhelper.NetworkNode
+                                 # we'll fake it for the test_node.NetworkNode
         
         for nid in self.all_nodes:
             self.zpax_nodes[nid] = ('foo','foo')
             
-            tm = TransactionManager( testhelper.Channel('test_channel', testhelper.NetworkNode(nid)),    #network_channel
+            tm = TransactionManager( test_node.Channel('test_channel', test_node.NetworkNode(nid)),    #network_channel
                                      2,                              #quorum_size,
                                      self.all_nodes,                 #all_node_ids,
                                      2,                              #threshold,

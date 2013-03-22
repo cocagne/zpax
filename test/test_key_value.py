@@ -17,9 +17,10 @@ sys.path.append( pd(this_dir) )
 sys.path.append( os.path.join(pd(this_dir), 'examples') )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
-from zpax import multi, tzmq, testhelper, durable
+from zpax import durable
 
-from zpax.testhelper import trace_messages, show_stacktrace
+from zpax.network import test_node
+from zpax.network.test_node import trace_messages, show_stacktrace
 
 import key_value
 
@@ -36,7 +37,7 @@ class TestReq (object):
     last_val = None
 
     def __init__(self, channel='test_channel.kv', node_id='client'):
-        self.net = testhelper.NetworkNode(node_id)
+        self.net = test_node.NetworkNode(node_id)
         self.channel = channel
         self.net.add_message_handler(channel, self)
         self.net.connect([])
@@ -84,7 +85,7 @@ class KeyValueDBTester(unittest.TestCase):
 
         self.dd_store = durable.MemoryOnlyStateStore()
 
-        testhelper.setup()
+        test_node.setup()
 
         
     @property
@@ -137,7 +138,7 @@ class KeyValueDBTester(unittest.TestCase):
             if not node_name in self.all_nodes or node_name in self.nodes:
                 continue
 
-            n = key_value.KeyValueDB(testhelper.Channel('test_channel', testhelper.NetworkNode(node_name)),
+            n = key_value.KeyValueDB(test_node.Channel('test_channel', test_node.NetworkNode(node_name)),
                                   2,
                                   self.durable_key.format(node_name),
                                   self.dd_store,

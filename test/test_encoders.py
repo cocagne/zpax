@@ -13,7 +13,7 @@ this_dir = pd(os.path.abspath(__file__))
 sys.path.append( pd(this_dir) )
 
 
-from zpax import json_encoder
+from zpax.network import json_encoder
 
 class JSONEncoderTester(unittest.TestCase):
 

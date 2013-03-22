@@ -15,9 +15,10 @@ sys.path.append( pd(this_dir) )
 sys.path.append( os.path.join(pd(pd(this_dir)), 'paxos') )
 
 
-from zpax import multi, testhelper, durable
+from zpax import multi, durable
+from zpax.network import test_node
 
-from zpax.testhelper import gatherResults, trace_messages, show_stacktrace
+from zpax.network.test_node import gatherResults, trace_messages, show_stacktrace
 
 
 def delay(t):
@@ -51,7 +52,7 @@ class HBTestNode(multi.MultiPaxosHeartbeatNode):
 
 
     def on_leadership_acquired(self, *args):
-        if testhelper.TRACE:
+        if test_node.TRACE:
             print self.node_uid, 'Leadership Acquired'
         super(HBTestNode,self).on_leadership_acquired(*args)
 
@@ -59,13 +60,13 @@ class HBTestNode(multi.MultiPaxosHeartbeatNode):
 
 
     def on_leadership_lost(self, *args):
-        if testhelper.TRACE:
+        if test_node.TRACE:
             print self.node_uid, 'Leadership Lost'
         self.dleader_acq = defer.Deferred()
         super(HBTestNode,self).on_leadership_lost(*args)
 
     def on_resolution(self, proposal_id, value):
-        if testhelper.TRACE:
+        if test_node.TRACE:
             print self.node_uid, 'Resolution:', proposal_id, value
         #print 'RESOLUTION: ', proposal_id, value
         d = self.dresolution
@@ -453,7 +454,7 @@ class HeartbeatTester(MultiTesterBase, unittest.TestCase):
     @defer.inlineCallbacks
     def _setup(self):
 
-        testhelper.setup()
+        test_node.setup()
 
         self.dd_store = durable.MemoryOnlyStateStore()
 
@@ -461,7 +462,7 @@ class HeartbeatTester(MultiTesterBase, unittest.TestCase):
         
         for uid in all_nodes:
 
-            self.nodes[uid] =  HBTestNode( testhelper.Channel('test_channel', testhelper.NetworkNode(uid)),
+            self.nodes[uid] =  HBTestNode( test_node.Channel('test_channel', test_node.NetworkNode(uid)),
                                            2,
                                            self.durable_key.format(uid),
                                            self.dd_store,
@@ -486,7 +487,7 @@ class HeartbeatTester(MultiTesterBase, unittest.TestCase):
 
     @defer.inlineCallbacks
     def recover_node(self, node_uid, link_up = True):
-        n = HBTestNode( testhelper.Channel('test_channel', testhelper.NetworkNode(node_uid)),
+        n = HBTestNode( test_node.Channel('test_channel', test_node.NetworkNode(node_uid)),
                         2,
                         self.durable_key.format(node_uid),
                         self.dd_store,
