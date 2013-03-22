@@ -1,10 +1,20 @@
+'''
+This module provides a Multi-Paxos node implementation. The implementation is
+broken into two separate components. MultiPaxosNode implements the basic logic
+required for Multi-Paxos operation. MultiPaxosHeartbeatNode enhances the basic
+implementation with a heartbeating mechanism used to detect and recover from
+failed leaders. The heartbeating mechanism is only one of potentially many
+mechanisms that could be used to serve this purpose so it is isolated from
+the rest of the Multi-Paxoxs logic to facilitate reuse of the generic component.
+'''
+
 import os
 import random
 
-from twisted.internet import defer, task, reactor
+from   twisted.internet import defer, task, reactor
 
 import paxos.functional
-from paxos.functional import ProposalID
+from   paxos.functional import ProposalID
 
 
 class ProposalFailed(Exception):
@@ -20,23 +30,26 @@ class InstanceMismatch(ProposalFailed):
 
 class ProposalAdvocate (object):
     '''
-    Instances of this class ensure that the leader receives the
-    proposed value.
+    Instances of this class ensure that the leader receives the proposed value.
     '''
     callLater   = reactor.callLater
     retry_delay = 10 # seconds
 
-    instance   = None
-    proposal   = None
-    request_id = None
-    retry_cb   = None
+    instance    = None
+    proposal    = None
+    request_id  = None
+    retry_cb    = None
 
     
-    def __init__(self, mnode):
+    def __init__(self, mnode, retry_delay = None):
         '''
-        retry_delay - Floating point delay in seconds between retry attempts
+        mnode       - MultiPaxosNode
+        retry_delay - Floating point delay in seconds between retry attempts. Defaults
+                      to 10
         '''
         self.mnode = mnode
+        if retry_delay:
+            self.retry_delay = None
         
         
     def cancel(self):
@@ -89,6 +102,10 @@ class ProposalAdvocate (object):
     
 
     def set_proposal(self, instance, request_id, proposed_value):
+        '''
+        Sets the proposal value if one hasn't already been set and begins 
+        attempting to notify the current leader of the proposed value.
+        '''
         if self.request_id is None:
             self.instance   = instance
             self.proposal   = proposed_value
@@ -194,6 +211,15 @@ class MultiPaxosNode(object):
 
     
     def change_quorum_size(self, quorum_size):
+        '''
+        If nodes are added/removed from the Paxos group, this method may be used
+        to update the quorum size. Note: negotiation of the new Paxos membership
+        and resulting quorum size should occur within the context of the
+        previous multi-paxos instance. Doing so outside the multi-paxos chain of
+        resolutions will almost certainly result in an inconsistent view of the
+        membership list which, in turn, breaks the safety guarantees provided
+        by Paxos.
+        '''
         self.quorum_size = quorum_size
         self.pax.change_quorum_size( quorum_size )
 
@@ -205,6 +231,15 @@ class MultiPaxosNode(object):
 
     @defer.inlineCallbacks
     def persist(self):
+        '''
+        Uses the durable state store to flush recovery state to disk.
+        Subclasses may add to the flushed state by overriding the
+        _get_additional_persistent_state() method.
+
+        TODO: INSPECT PERSIST LOGIC TO INSURE PERSISTS ARENT LOST
+              may need list of deferreds to "persist next" after the
+              current operation completes. 
+        '''
         if not self.persisting:
             self.persisting = True
 

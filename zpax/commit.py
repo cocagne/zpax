@@ -3,46 +3,46 @@ This module provides a Paxos Commit implementation.
 
 Implementation Strategy:
 
-Liveness: To ensure forward progress, each transaction manager is assigned
-          a MultiPaxos instance. The leader of the MultiPaxos session is
-          responsible for driving all outstanding transactions to conclusion.
-          In essence, this re-uses the liveness solution for MultiPaxos.
+Liveness:    To ensure forward progress, each transaction manager is assigned
+             a MultiPaxos instance. The leader of the MultiPaxos session is
+             responsible for driving all outstanding transactions to conclusion.
+             In essence, this re-uses the liveness solution for MultiPaxos.
 
 Parallelism: All transactions are executed in parallel and no guarantees
              are made about the order in which they complete.
 
-Durability: To achieve any measure of performance with multiple,
-            concurrent transactions, some manner of batched writes to
-            disk will be required.  The transaction manager requires a
-            "durability" object that implements the durable.IDurableStateStore
-            interface. When TransactionNodes need to save their state
-            prior to sending promise/accepted messages, they will call
-            the "save_state()" method of the durable object and send
-            the message when the returned deferred fires.  
+Durability:  To achieve any measure of performance with multiple,
+             concurrent transactions, some manner of batched writes to
+             disk will be required.  The transaction manager requires a
+             "durability" object that implements the durable.IDurableStateStore
+             interface. When TransactionNodes need to save their state
+             prior to sending promise/accepted messages, they will call
+             the "save_state()" method of the durable object and send
+             the message when the returned deferred fires.  
 
-Threshold: In traditional Paxos Commit, every node must respond with the
-           commit/abort decision before the overall transaction may be
-           considered complete. For quorum-based applications that can
-           tolerate one or more "aborts" and still consider the overall
-           transaction a success, a "threshold" parameter may be used to
-           indicate the required number of "comitted" messages needed
-           for overall success. This defaults to the total number of
-           nodes.
+Threshold:   In traditional Paxos Commit, every node must respond with the
+             commit/abort decision before the overall transaction may be
+             considered complete. For quorum-based applications that can
+             tolerate one or more "aborts" and still consider the overall
+             transaction a success, a "threshold" parameter may be used to
+             indicate the required number of "comitted" messages needed
+             for overall success. This defaults to the total number of
+             nodes.
 
-Messaging: This implementation avoids the final "commit"/"abort" message
-           by having all nodes listen to each other directly. When a node
-           sees that enough of its peers have responded with their own
-           "commit"/"abort" decision, it can determine the overall result
-           for itself.
+Messaging:   This implementation avoids the final "commit"/"abort" message
+             by having all nodes listen to each other directly. When a node
+             sees that enough of its peers have responded with their own
+             "commit"/"abort" decision, it can determine the overall result
+             for itself.
 
-Recovery: Each node maintains a cache of transaction results. When a
-          message arrives for an already concluded transaction that is
-          contained within the cache, the result is sent directly.
-          Applications should override the default cache implementation
-          and provide a "check" function that can look further back
-          in time than the in-memory cache allows. Otherwise,
-          old transactions from a recovered node may either appear to
-          be new or may never complete.
+Recovery:    Each node maintains a cache of transaction results. When a
+             message arrives for an already concluded transaction that is
+             contained within the cache, the result is sent directly.
+             Applications should override the default cache implementation
+             and provide a "check" function that can look further back
+             in time than the in-memory cache allows. Otherwise,
+             old transactions from a recovered node may either appear to
+             be new or may never complete.
 '''
 
 import time

@@ -1,7 +1,21 @@
+'''
+The Paxos algorithm requires state to be flushed to stable media prior to sending
+certain messages over the network. This module provides an interface for doing so.
+
+As these operations occur frequent and slow to complete, buffering must be used
+to achieve any level of performance. The IDurableStateStore provides an interface
+that uses deferreds with the get/set methods to abstract the backend implementation.
+
+MemoryOnlyStateStore may be used in unit tests to avoid the performance penalty
+associated with file I/O.
+'''
+
 from twisted.internet import defer
 
-class IDurableStateStore(object):
 
+
+class IDurableStateStore(object):
+    
     def set_state(self, data_id, new_state):
         '''
         Replaces the previous (if any) state associated with 'data_id' with the
