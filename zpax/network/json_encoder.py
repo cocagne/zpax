@@ -1,3 +1,8 @@
+'''
+This module provides a simple message encoder that converts messages to and from
+JSON text.
+'''
+
 import json
 
 from twisted.python import log

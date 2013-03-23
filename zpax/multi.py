@@ -135,6 +135,12 @@ class ProposalAdvocate (object):
 
         
 class MultiPaxosNode(object):
+    '''
+    This is an abstract class that provides an implementation for the majority
+    of the required Multi-Paxos components. The only omitted component is the
+    Detection of and recovery from leadership failures. There are multiple
+    strategies for handling this so it is left for subclasses to define.
+    '''
 
     def __init__(self, net_channel, quorum_size, durable_data_id, durable_data_store):
         '''
@@ -200,16 +206,13 @@ class MultiPaxosNode(object):
         
         
     def shutdown(self):
+        '''
+        Shuts down the node.
+        '''
         self.advocate.cancel()
         self.net.shutdown()
 
 
-    def __getstate__(self):
-        d = dict(self.__dict__)
-        d.pop('net', None)
-        return d
-
-    
     def change_quorum_size(self, quorum_size):
         '''
         If nodes are added/removed from the Paxos group, this method may be used
@@ -229,16 +232,13 @@ class MultiPaxosNode(object):
         Abstract function that returns a new paxos.node.Node instance
         '''
 
+        
     @defer.inlineCallbacks
     def persist(self):
         '''
         Uses the durable state store to flush recovery state to disk.
         Subclasses may add to the flushed state by overriding the
         _get_additional_persistent_state() method.
-
-        TODO: INSPECT PERSIST LOGIC TO INSURE PERSISTS ARENT LOST
-              may need list of deferreds to "persist next" after the
-              current operation completes. 
         '''
         if not self.persisting:
             self.persisting = True
@@ -262,6 +262,10 @@ class MultiPaxosNode(object):
 
 
     def next_instance(self, set_instance_to=None):
+        '''
+        Advances to the next multi-paxos instance or to the specified
+        instance number if one is provided. 
+        '''
         self.advocate.cancel()
         
         if set_instance_to is None:
@@ -273,32 +277,63 @@ class MultiPaxosNode(object):
 
 
     def broadcast(self, msg_type, **kwargs):
+        '''
+        Broadcasts a message to all peers
+        '''
         kwargs.update( dict(instance=self.instance) )
         self.net.broadcast(msg_type, kwargs)
 
         
     def unicast(self, dest_uid, msg_type, **kwargs):
+        '''
+        Sends a message to the specified peer only
+        '''
         kwargs.update( dict(instance=self.instance) )
         self.net.unicast(dest_uid, msg_type, kwargs)
         
     
     def behind_in_sequence(self, current_instance):
-        pass
+        '''
+        Nodes can only send messages for an instance once the previous instance
+        has been completed. Consequently, observance of a "future" message
+        indicates that this node has fallen behind it's peers. This method is
+        called when that case is detected. Application-specific logic must then
+        preform some form of catchup mechanism to bring the node back in sync
+        with it's peers.
+        '''
         
 
     def _mpax_filter(func):
+        '''
+        Function decorator that filters out messages that do not match the
+        current instance number
+        '''
         def wrapper(self, from_uid, msg):
             if msg['instance'] == self.instance and not self.pax_ignore:
                 func(self, from_uid, msg)
         return wrapper
 
+        
     #------------------------------------------------------------------
     #
     # Proposal Management
     #
     #------------------------------------------------------------------
 
+    
     def set_proposal(self, request_id, proposal_value, instance=None):
+        '''
+        Proposes a value for the current instance.
+
+        request_id - arbitrary string that may be used to match the resolved
+                     value to the originating request
+
+        proposal_value - Value proposed for resolution
+
+        instance - Optional instance number for which the proposal is valid.
+                   InstanceMismatch is thrown If the current proposal number
+                   does not match this parameter.
+        '''
         if instance is None:
             instance = self.instance
             
@@ -337,12 +372,29 @@ class MultiPaxosNode(object):
         self.broadcast( 'prepare', proposal_id = proposal_id )
 
         
-    @_mpax_filter
     def receive_prepare(self, from_uid, msg):
-        self.pax.recv_prepare( from_uid, ProposalID(*msg['proposal_id']) )
+        '''
+        Prepare messages must be inspected for "future" instance numbers and
+        the catchup mechanism must be invoked if they are seen. This protects
+        against the following case:
+        
+           * A threshold number of nodes resolve on a proposal
+           * One of the nodes crashes before learning of the resolution
+           * The rest of the nodes crash
+           * All nodes recover
+           * At this point, leadership cannot be obtained since the first node that
+             crashed believes it is still working with paxos instance N whereas the
+             other nodes believe they are working on paxos instance N+1. No quorum
+             can be achieved.
+        '''
+        if msg['instance'] > self.instance:
+            self.behind_in_sequence( msg['instance'] )
 
-        if self.pax.persistance_required:
-            self.persist()
+        elif msg['instance'] == self.instance:
+            self.pax.recv_prepare( from_uid, ProposalID(*msg['proposal_id']) )
+
+            if self.pax.persistance_required:
+                self.persist()
         
 
     def send_promise(self, to_uid, proposal_id, previous_id, accepted_value):
@@ -402,7 +454,6 @@ class MultiPaxosNode(object):
 
         
     def on_leadership_acquired(self):
-        #print 'LEADERSHIP ACQ: ', self.node_uid
         pass
 
     
@@ -413,6 +464,17 @@ class MultiPaxosNode(object):
 
         
 class MultiPaxosHeartbeatNode(MultiPaxosNode):
+    '''
+    This class provides a concrete implementation of MultiPaxosNode that uses
+    the heartbeating mechanism defined in paxos.functional.HeartbeatNode to
+    detect and recover from leadership failures.
+
+    Instance Variables:
+    
+    hb_period       - Floating-point time in seconds between heartbeats
+    liveness_window - Window of time within which at least one heartbeat message
+                      must be seen for the the leader to be considered alive.
+    '''
 
     hb_period         = 60  # Seconds
     liveness_window   = 180 # Seconds
@@ -447,13 +509,6 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         self._start_tasks()
 
 
-    def __getstate__(self):
-        d = super(MultiPaxosHeartbeatNode, self).__getstate__()
-        d.pop('hb_poll_task',      None)
-        d.pop('leader_pulse_task', None)
-        return d
-
-
     def _recover_from_persistent_state(self, state):
         self.pax = self._new_paxos_node()
         
@@ -465,7 +520,6 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         
         return defer.succeed(None)
         
-
 
     def _start_tasks(self):
         if self.hb_poll_task is None:
@@ -486,30 +540,6 @@ class MultiPaxosHeartbeatNode(MultiPaxosNode):
         self.is_leader = True
         self.leader_pulse_task.start( self.hb_period )
         super(MultiPaxosHeartbeatNode, self).on_leadership_acquired()
-
-
-    def receive_prepare(self, from_uid, msg):
-        '''
-        Waiting purely for a heartbeat message for detecting the behind-in-sequence
-        condition is insufficient so prepare messages must be checked as well. The
-        condition being protected against is the following:
-        
-           * A threshold number of nodes resolve on a proposal
-           * One of the nodes crashes before learning of the resolution
-           * The rest of the nodes crash
-           * All nodes recover
-           * At this point, leadership cannot be obtained since the first node that
-             crashed believes it is still working with paxos instance N whereas the
-             other nodes believe they are working on paxos instance N+1. No quorum
-             can be achieved.
-
-        We prevent this condition by examinging prepare messages for instances
-        greater than our own and use the catchup mechanism to get back in sync
-        with our peers.
-        '''
-        if msg['instance'] > self.instance:
-            self.behind_in_sequence( msg['instance'] )
-        super(MultiPaxosHeartbeatNode, self).receive_prepare(from_uid, msg)
 
 
     #------------------------------------------------------------

@@ -1,4 +1,7 @@
 '''
+zed is Twisted zmq (twist the second and third glyphs of zmq aound a bit and
+you wind up with zed. Get it? Ha! I kill me....)
+
 This module wraps the pyzmq interface in a thin layer that integrates with
 the Twisted reactor. Unlike txZMQ (upon which this code is based) no
 attempt is made to change the API to conform with Twisted norms. The
@@ -20,11 +23,12 @@ from twisted.python   import log
 
 from zmq.core.constants import PUB, SUB, REQ, REP, PUSH, PULL, ROUTER, DEALER, PAIR
 
-# TODO: Support the Producer/Consumer interface
 
 _context = None # ZmqContext singleton
 
+
 POLL_IN_OUT = constants.POLLOUT & constants.POLLIN
+
 
 def getContext():
     if _context is not None:

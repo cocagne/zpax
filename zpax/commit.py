@@ -300,7 +300,6 @@ class TransactionNode(paxos.practical.Node):
 
 
     def set_proposal(self, value):
-        #print 'SETTING PROPOSAL for Node {0}: {1} leader={2} active={3}'.format(self.tx_node_id, value, self.leader, self.active)
         super(TransactionNode,self).set_proposal(value)
         
 
@@ -388,7 +387,6 @@ class TransactionNode(paxos.practical.Node):
         self.recv_prepare_nack( from_uid, ProposalID(*msg['proposal_id']) )
         
     def receive_accept(self, from_uid, msg):
-        #print 'GOT ACCEPT!', self.tx.manager.node_uid, from_uid
         self.recv_accept_request( from_uid, ProposalID(*msg['proposal_id']), msg['proposal_value'] )
 
     def receive_accept_nack(self, from_uid, msg):
@@ -398,7 +396,6 @@ class TransactionNode(paxos.practical.Node):
         self.recv_accepted( from_uid, ProposalID(*msg['proposal_id']), msg['accepted_value'] )
         
     def on_resolution(self, proposal_id, value):
-        #print 'NODE RESOLVED!!!', (self.tx.manager.node_uid, self.tx.uuid, self.tx_node_id), value
         self.tx.node_resolved(self)
 
     def on_leadership_acquired(self):

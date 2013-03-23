@@ -1,3 +1,7 @@
+'''
+This module provides a NetworkNode implementation on top of ZeroMQ sockets.
+'''
+
 from twisted.internet import defer, task, reactor
 
 from zpax.network import zed
@@ -5,6 +9,9 @@ from zpax.network.channel import Channel
 
 
 class SimpleEncoder(object):
+    '''
+    An in-process "encoder" that is primarily useful for unit testing.
+    '''
     def encode(self, node_uid, message_type, parts):
         return ['{0}\0{1}'.format(node_uid, message_type)] + list(parts)
 
@@ -17,8 +24,8 @@ class SimpleEncoder(object):
 class NetworkNode (object):
     '''
     Messages are handled by adding instances to the message_handlers list. The
-    first instance that contains a method named 'nn_receive_<message_type>'
-    will have that message called. The first argument is always the message
+    first instance that contains a method named 'receive_<message_type>'
+    will have that method called. The first argument is always the message
     sender's node_uid. The remaining positional arguments are filled with the
     parts of the ZeroMQ message.
     '''

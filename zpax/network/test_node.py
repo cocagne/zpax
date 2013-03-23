@@ -1,3 +1,10 @@
+'''
+This module provides an "in memory" implementation of the NetworkNode interface.
+As the module's name implies, it's intended for use in testing code. This
+implementation provides deterministic messaging that always deliveres messages
+in the same order across repeated runs of the same test.
+'''
+
 from twisted.internet import defer, task, reactor
 
 from zpax.network import channel
@@ -25,6 +32,10 @@ def gatherResults( l ):
 
 
 def trace_messages( fn ):
+    '''
+    Function decorator that may be applied to a test_ method to display all
+    messages exchanged during the test
+    '''
     @defer.inlineCallbacks
     def wrapit(self, *args, **kwargs):
         global TRACE
@@ -38,6 +49,9 @@ def trace_messages( fn ):
 
 
 def show_stacktrace( fn ):
+    '''
+    Function decorator that catches exceptions and prints a traceback
+    '''
     @defer.inlineCallbacks
     def wrapit(self, *args, **kwargs):
         try:
