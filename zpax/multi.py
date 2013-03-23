@@ -67,13 +67,6 @@ class ProposalAdvocate (object):
         self.request_id = None
 
         
-    def __getstate__(self):
-        d = dict(self.__dict__)
-        d.pop('retry_cb', None)
-        d.pop('mnode', None)
-        return d
-
-
     def recover(self, mnode):
         '''
         Called when recovering from durable state
