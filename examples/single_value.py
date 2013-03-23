@@ -7,10 +7,6 @@ class SingleValueNode (multi.MultiPaxosHeartbeatNode):
     '''
     This class implements a network node that uses Paxos to coordinate changes
     to a single, shared value.
-
-    Clients propose changes, learn the current value, and wait for new values
-    to be chosen via a Router socket. The Pub/Sub Paxos messaging is handled by
-    node.BasicNode.
     '''
     catchup_delay = 10
     
