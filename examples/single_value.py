@@ -1,8 +1,6 @@
-import json
+from twisted.internet import defer, task, reactor
 
 from zpax import multi
-
-from twisted.internet import defer, task, reactor
 
 
 class SingleValueNode (multi.MultiPaxosHeartbeatNode):
@@ -78,11 +76,6 @@ class SingleValueNode (multi.MultiPaxosHeartbeatNode):
         if self.catchup_cb and self.catchup_cb.active():
             self.catchup_cb.cancel()
             self.catchup_cb = None
-
-        #self.catchup_channel.broadcast( 'current_value', dict(instance=self.cur_instance,
-        #                                                  proposal_id=self.cur_proposal,
-        #                                                  value=self.current_value) )
-                                                          
 
 
     def on_resolution(self, proposal_id, value):
